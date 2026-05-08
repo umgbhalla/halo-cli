@@ -71,23 +71,23 @@ wheels = [
 
 [[package]]
 name = "catalyst-tracing"
-version = "0.0.10"
+version = "0.0.12"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "opentelemetry-api", marker = "python_full_version >= '3.11'" },
-    { name = "opentelemetry-exporter-otlp-proto-common", marker = "python_full_version >= '3.11'" },
-    { name = "opentelemetry-sdk", marker = "python_full_version >= '3.11'" },
-    { name = "protobuf", marker = "python_full_version >= '3.11'" },
-    { name = "requests", marker = "python_full_version >= '3.11'" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-exporter-otlp-proto-common" },
+    { name = "opentelemetry-sdk" },
+    { name = "protobuf" },
+    { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1b/d8/f0aabdce43622fff4ad95b9aa89ce7c8eedad7b8b62f30de7856040e2b08/catalyst_tracing-0.0.10.tar.gz", hash = "sha256:575abb6f7d9f2560ae61b98f0bd702cc70396826e8e692058da41baca618716c", size = 43294, upload-time = "2026-05-02T00:36:57.143Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c0/f6/a1d9eec5ceeea325ebc96fbfe7f117b15aabc62604d31d138beb31587d1e/catalyst_tracing-0.0.12.tar.gz", hash = "sha256:d37deca0c7145e6c832c3d2dbbf7b92f1714a3ff599a5f6277872e85255355c5", size = 45158, upload-time = "2026-05-06T03:17:28.901Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f4/0d/e25d476a6c5247ae00ebf4588fcfec16eeb451e2e2f0abca9e4d08948f75/catalyst_tracing-0.0.10-py3-none-any.whl", hash = "sha256:3bf0e0b46922461344dded633922603bd95dc0416a4213d43155650636fbd20c", size = 62063, upload-time = "2026-05-02T00:36:58.304Z" },
+    { url = "https://files.pythonhosted.org/packages/96/4d/7ce4a88aa91d8e6b41a95333a9a70d45a54e5fea6900b5d0b690121b8ee1/catalyst_tracing-0.0.12-py3-none-any.whl", hash = "sha256:f09ca859ee3e3858333ab53ccf912b5cdd646a7b791ca2e78fe370e0236b7dc8", size = 65210, upload-time = "2026-05-06T03:17:27.456Z" },
 ]
 
 [package.optional-dependencies]
 openai-agents = [
-    { name = "openai-agents", marker = "python_full_version >= '3.11'" },
+    { name = "openai-agents" },
 ]
 
 [[package]]
@@ -425,6 +425,7 @@ version = "0.1.6"
 source = { editable = "." }
 dependencies = [
     { name = "deno" },
+    { name = "inference-catalyst-tracing", extra = ["openai-agents"] },
     { name = "numpy" },
     { name = "openai" },
     { name = "openai-agents" },
@@ -432,11 +433,6 @@ dependencies = [
     { name = "pydantic" },
     { name = "rich" },
     { name = "typer" },
-]
-
-[package.optional-dependencies]
-telemetry = [
-    { name = "inference-catalyst-tracing", extra = ["openai-agents"], marker = "python_full_version >= '3.11'" },
 ]
 
 [package.dev-dependencies]
@@ -450,7 +446,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "deno", specifier = "==2.7.14" },
-    { name = "inference-catalyst-tracing", extras = ["openai-agents"], marker = "python_full_version >= '3.11' and extra == 'telemetry'", specifier = "==0.0.10" },
+    { name = "inference-catalyst-tracing", extras = ["openai-agents"], specifier = "==0.0.12" },
     { name = "numpy", specifier = "==2.2.6" },
     { name = "openai", specifier = "==2.32.0" },
     { name = "openai-agents", specifier = "==0.14.7" },
@@ -459,7 +455,6 @@ requires-dist = [
     { name = "rich", specifier = "==15.0.0" },
     { name = "typer", specifier = "==0.25.0" },
 ]
-provides-extras = ["telemetry"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -520,7 +515,7 @@ name = "importlib-metadata"
 version = "8.7.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "zipp", marker = "python_full_version >= '3.11'" },
+    { name = "zipp" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f3/49/3b30cad09e7771a4982d9975a8cbf64f00d4a1ececb53297f1d9a7be1b10/importlib_metadata-8.7.1.tar.gz", hash = "sha256:49fef1ae6440c182052f407c8d34a68f72efc36db9ca90dc0113398f2fdde8bb", size = 57107, upload-time = "2025-12-21T10:00:19.278Z" }
 wheels = [
@@ -529,19 +524,19 @@ wheels = [
 
 [[package]]
 name = "inference-catalyst-tracing"
-version = "0.0.10"
+version = "0.0.12"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "catalyst-tracing", marker = "python_full_version >= '3.11'" },
+    { name = "catalyst-tracing" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/80/15/362a98e541c184b7e0cc5c3edf5be6fd8951ec3d9430c9821ef1b1f45afa/inference_catalyst_tracing-0.0.10.tar.gz", hash = "sha256:a52754aea3df854e293fb7567916a3a6c56928856b86af7a5656bd1c89b4906a", size = 2521, upload-time = "2026-05-02T00:36:59.586Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/84/f1/53fdd3e6392ed1769cc39d7edc4fb21304ab572f03655965052751a7eaaa/inference_catalyst_tracing-0.0.12.tar.gz", hash = "sha256:391c276d14ada340091ec23f170ea20ce383059aa07176f1b7cebc35e27b2d3c", size = 2611, upload-time = "2026-05-06T03:17:30.139Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/61/c9/7c358abf940ba3201ae59d340e56f4c6f57f6fd9e4828acd5f93a1694a36/inference_catalyst_tracing-0.0.10-py3-none-any.whl", hash = "sha256:e0124afafb679a38bace665137ca169ee5be185a01f9b38f3102c0727ead6710", size = 3033, upload-time = "2026-05-02T00:37:00.362Z" },
+    { url = "https://files.pythonhosted.org/packages/56/b4/affb43482bd00007543f52e48d1bcd7ed001a76c9b05ca0a84f3d0563c4c/inference_catalyst_tracing-0.0.12-py3-none-any.whl", hash = "sha256:a0b4c523c1b8e8b6097b84842071a5d7509c641d7574e12f61dcf56aab47f9e2", size = 3097, upload-time = "2026-05-06T03:17:31.234Z" },
 ]
 
 [package.optional-dependencies]
 openai-agents = [
-    { name = "catalyst-tracing", extra = ["openai-agents"], marker = "python_full_version >= '3.11'" },
+    { name = "catalyst-tracing", extra = ["openai-agents"] },
 ]
 
 [[package]]
@@ -850,8 +845,8 @@ name = "opentelemetry-api"
 version = "1.41.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "importlib-metadata", marker = "python_full_version >= '3.11'" },
-    { name = "typing-extensions", marker = "python_full_version >= '3.11'" },
+    { name = "importlib-metadata" },
+    { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/fa/fc/b7564cbef36601aef0d6c9bc01f7badb64be8e862c2e1c3c5c3b43b53e4f/opentelemetry_api-1.41.1.tar.gz", hash = "sha256:0ad1814d73b875f84494387dae86ce0b12c68556331ce6ce8fe789197c949621", size = 71416, upload-time = "2026-04-24T13:15:38.262Z" }
 wheels = [
@@ -863,7 +858,7 @@ name = "opentelemetry-exporter-otlp-proto-common"
 version = "1.41.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "opentelemetry-proto", marker = "python_full_version >= '3.11'" },
+    { name = "opentelemetry-proto" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/ae/fa/f9e3bd3c4d692b3ce9a2880a167d1f79681a1bea11f00d5bf76adc03e6ea/opentelemetry_exporter_otlp_proto_common-1.41.1.tar.gz", hash = "sha256:0e253156ea9c36b0bd3d2440c5c9ba7dd1f3fb64ba7a08fc85fbac536b56e1fb", size = 20409, upload-time = "2026-04-24T13:15:40.924Z" }
 wheels = [
@@ -875,7 +870,7 @@ name = "opentelemetry-proto"
 version = "1.41.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "protobuf", marker = "python_full_version >= '3.11'" },
+    { name = "protobuf" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/99/e8/633c6d8a9c8840338b105907e55c32d3da1983abab5e52f899f72a82c3d1/opentelemetry_proto-1.41.1.tar.gz", hash = "sha256:4b9d2eb631237ea43b80e16c073af438554e32bc7e9e3f8ca4a9582f900020e5", size = 45670, upload-time = "2026-04-24T13:15:49.768Z" }
 wheels = [
@@ -887,9 +882,9 @@ name = "opentelemetry-sdk"
 version = "1.41.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "opentelemetry-api", marker = "python_full_version >= '3.11'" },
-    { name = "opentelemetry-semantic-conventions", marker = "python_full_version >= '3.11'" },
-    { name = "typing-extensions", marker = "python_full_version >= '3.11'" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-semantic-conventions" },
+    { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/58/d0/54ee30dab82fb0acda23d144502771ff76ef8728459c83c3e89ef9fb1825/opentelemetry_sdk-1.41.1.tar.gz", hash = "sha256:724b615e1215b5aeacda0abb8a6a8922c9a1853068948bd0bd225a56d0c792e6", size = 230180, upload-time = "2026-04-24T13:15:50.991Z" }
 wheels = [
@@ -901,8 +896,8 @@ name = "opentelemetry-semantic-conventions"
 version = "0.62b1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "opentelemetry-api", marker = "python_full_version >= '3.11'" },
-    { name = "typing-extensions", marker = "python_full_version >= '3.11'" },
+    { name = "opentelemetry-api" },
+    { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/9e/de/911ac9e309052aca1b20b2d5549d3db45d1011e1a610e552c6ccdd1b64f8/opentelemetry_semantic_conventions-0.62b1.tar.gz", hash = "sha256:c5cc6e04a7f8c7cdd30be2ed81499fa4e75bfbd52c9cb70d40af1f9cd3619802", size = 145750, upload-time = "2026-04-24T13:15:52.236Z" }
 wheels = [

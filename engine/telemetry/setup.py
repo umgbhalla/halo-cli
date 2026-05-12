@@ -54,10 +54,9 @@ def setup_telemetry(*, enable: bool, run_id: str) -> TelemetryHandle | None:
     Always clears the openai-agents SDK's default tracing processor list
     so HALO's own LLM activity does not leak to the OpenAI dashboard.
     """
+    set_trace_processors([])
     if not enable:
         return None
-
-    set_trace_processors([])
 
     path = os.environ.get("HALO_TELEMETRY_PATH") or f"halo-telemetry-{run_id}.jsonl"
     processor = attach_local_processor(

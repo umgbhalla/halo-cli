@@ -127,11 +127,9 @@ jq -r '[.trace_id, .name, .attributes."inference.observation_kind"] | @tsv' trac
 The OpenAI Agents SDK ships a default `TracingProcessor` that uploads to OpenAI's trace dashboard. `add_trace_processor(...)` is *additive* — both run by default. If you only want the inference.net file:
 
 ```python
-import os
-os.environ["OPENAI_AGENTS_DISABLE_TRACING"] = "1"
-# or, programmatically before setup_tracing():
-#   import agents
-#   agents.set_trace_processors([])
+import agents
+
+agents.set_trace_processors([])
 ```
 
 **Spans appear but `inference.llm.input_tokens` / `output_tokens` are `None`.**

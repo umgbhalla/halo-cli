@@ -5,9 +5,18 @@ from __future__ import annotations
 from engine.telemetry import setup_telemetry
 
 
-def test_setup_returns_none_when_disabled() -> None:
+def test_setup_returns_none_when_disabled(monkeypatch) -> None:
+    cleared: list[list] = []
+
+    monkeypatch.setattr(
+        "engine.telemetry.setup.set_trace_processors",
+        lambda procs: cleared.append(list(procs)),
+    )
+
     handle = setup_telemetry(enable=False, run_id="unused")
+
     assert handle is None
+    assert cleared == [[]]
 
 
 def test_setup_attaches_local_processor(monkeypatch, tmp_path) -> None:

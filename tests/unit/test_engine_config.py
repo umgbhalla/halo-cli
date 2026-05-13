@@ -28,6 +28,7 @@ def test_engine_config_defaults() -> None:
     assert cfg.model_provider == ModelProviderConfig()
     assert cfg.model_provider.base_url is None
     assert cfg.model_provider.api_key is None
+    assert cfg.model_provider.default_headers is None
 
 
 def test_engine_config_accepts_model_provider() -> None:
@@ -39,7 +40,9 @@ def test_engine_config_accepts_model_provider() -> None:
         model_provider=ModelProviderConfig(
             base_url="https://api.anthropic.com/v1/",
             api_key="sk-ant-test",
+            default_headers={"x-inference-task-id": "halo"},
         ),
     )
     assert cfg.model_provider.base_url == "https://api.anthropic.com/v1/"
     assert cfg.model_provider.api_key == "sk-ant-test"
+    assert cfg.model_provider.default_headers == {"x-inference-task-id": "halo"}

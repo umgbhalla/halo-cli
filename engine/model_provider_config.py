@@ -21,3 +21,4 @@ class ModelProviderConfig(BaseModel):
 
     base_url: str | None = None
     api_key: str | None = None
+    default_headers: dict[str, str] | None = None

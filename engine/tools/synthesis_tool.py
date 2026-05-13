@@ -66,6 +66,7 @@ class SynthesisTool:
             self._client = AsyncOpenAI(
                 base_url=self._model_provider.base_url,
                 api_key=self._model_provider.api_key,
+                default_headers=self._model_provider.default_headers,
             )
 
         response = await self._client.chat.completions.create(

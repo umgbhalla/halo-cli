@@ -35,6 +35,7 @@ def build_compactor_factory(
                 openai_client = AsyncOpenAI(
                     base_url=engine_config.model_provider.base_url,
                     api_key=engine_config.model_provider.api_key,
+                    default_headers=engine_config.model_provider.default_headers,
                 )
 
             user_text = _item_as_prompt(item)

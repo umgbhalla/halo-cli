@@ -385,3 +385,29 @@ def test_configure_default_sdk_client_sets_when_base_url_provided(
     # Tracing must NOT be redirected to the model endpoint — see
     # configure_default_sdk_client docstring.
     assert kwargs == {"use_for_tracing": False}
+
+
+def test_configure_default_sdk_client_sets_default_headers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[object, dict]] = []
+    monkeypatch.setattr(
+        runner_mod, "set_default_openai_client", lambda c, **kw: calls.append((c, kw))
+    )
+    configure_default_sdk_client(
+        ModelProviderConfig(
+            base_url="https://api.inference.net/v1/",
+            api_key="inf-key",
+            default_headers={
+                "x-inference-provider-url": "https://lllm.inference.net/v1",
+                "x-inference-task-id": "halo",
+            },
+        )
+    )
+
+    assert len(calls) == 1
+    client, kwargs = calls[0]
+    assert str(client.base_url).startswith("https://api.inference.net/v1")
+    assert client.default_headers["x-inference-provider-url"] == "https://lllm.inference.net/v1"
+    assert client.default_headers["x-inference-task-id"] == "halo"
+    assert kwargs == {"use_for_tracing": False}

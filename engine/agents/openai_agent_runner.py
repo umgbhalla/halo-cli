@@ -26,8 +26,8 @@ def configure_default_sdk_client(provider: ModelProviderConfig) -> None:
 
     The SDK uses a process-global client, so this is best-effort for callers
     running multiple engines in one process. We only override when at least
-    one of ``base_url`` / ``api_key`` is set; otherwise the SDK keeps using
-    its env-driven default.
+    one of ``base_url`` / ``api_key`` / ``default_headers`` is set; otherwise
+    the SDK keeps using its env-driven default.
 
     ``use_for_tracing=False`` keeps the SDK's tracing exporter on its
     default OpenAI path. Without this, redirecting model calls to a non-
@@ -35,10 +35,14 @@ def configure_default_sdk_client(provider: ModelProviderConfig) -> None:
     tracing POSTs there — those endpoints don't speak the tracing API,
     causing spurious errors or silent trace loss.
     """
-    if provider.base_url is None and provider.api_key is None:
+    if provider.base_url is None and provider.api_key is None and provider.default_headers is None:
         return
     set_default_openai_client(
-        AsyncOpenAI(base_url=provider.base_url, api_key=provider.api_key),
+        AsyncOpenAI(
+            base_url=provider.base_url,
+            api_key=provider.api_key,
+            default_headers=provider.default_headers,
+        ),
         use_for_tracing=False,
     )
 

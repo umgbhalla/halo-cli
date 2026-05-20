@@ -23,6 +23,7 @@ class MappedEvent:
     context_item: AgentContextItem | None = None
     output_item: AgentOutputItem | None = None
     delta: AgentTextDelta | None = None
+    refusal_text: str | None = None
 
 
 class OpenAiEventMapper:
@@ -96,6 +97,9 @@ class OpenAiEventMapper:
             for p in parts
             if getattr(p, "type", None) in ("output_text", "text")
         )
+        refusal_text = _extract_refusal_text(parts=parts, text=text)
+        if refusal_text is not None:
+            return MappedEvent(refusal_text=refusal_text)
 
         final = False
         if is_root and text and FINAL_SENTINEL in text:
@@ -229,3 +233,26 @@ def _read_arguments(item: ToolCallItem) -> str:
     if isinstance(raw, dict):
         return str(raw.get("arguments") or "")
     return str(getattr(raw, "arguments", "") or "")
+
+
+_TEXT_REFUSAL_PREFIXES = (
+    "i'm sorry, but i cannot assist with that request",
+    "i’m sorry, but i cannot assist with that request",
+    "i am sorry, but i cannot assist with that request",
+    "sorry, but i cannot assist with that request",
+)
+
+
+def _extract_refusal_text(*, parts: list[object], text: str) -> str | None:
+    refusal_parts = [
+        str(getattr(part, "refusal", "")).strip()
+        for part in parts
+        if getattr(part, "type", None) == "refusal" and str(getattr(part, "refusal", "")).strip()
+    ]
+    if refusal_parts:
+        return "\n".join(refusal_parts)
+
+    normalized = " ".join(text.strip().lower().split())
+    if any(normalized.startswith(prefix) for prefix in _TEXT_REFUSAL_PREFIXES):
+        return text.strip()
+    return None

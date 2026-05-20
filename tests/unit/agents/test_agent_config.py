@@ -12,4 +12,15 @@ def test_agent_config_constructs() -> None:
     )
     assert cfg.name == "root"
     assert cfg.maximum_turns == 20
+    assert cfg.refusal_retries == 0
     assert cfg.model.name == "claude-opus-4-7"
+
+
+def test_agent_config_accepts_refusal_retries() -> None:
+    cfg = AgentConfig(
+        name="root",
+        model=ModelConfig(name="claude-opus-4-7"),
+        maximum_turns=20,
+        refusal_retries=2,
+    )
+    assert cfg.refusal_retries == 2

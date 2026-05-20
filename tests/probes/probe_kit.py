@@ -49,6 +49,7 @@ from engine.traces.trace_index_builder import TraceIndexBuilder
 from engine.traces.trace_store import TraceStore
 from tests._sdk_events import (
     assistant_message_event,
+    assistant_refusal_event,
     text_delta_event,
     tool_call_event,
     tool_output_event,
@@ -140,6 +141,15 @@ def make_assistant_text(
     content. Use this for the model's natural-language replies, including
     those carrying the ``<final/>`` sentinel for the root agent."""
     return assistant_message_event(item_id=item_id, text=text)
+
+
+def make_refusal(
+    refusal: str,
+    *,
+    item_id: str = "msg-refusal",
+) -> RunItemStreamEvent:
+    """Build a structured model-refusal event."""
+    return assistant_refusal_event(item_id=item_id, refusal=refusal)
 
 
 def make_tool_call(

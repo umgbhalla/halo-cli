@@ -9,6 +9,10 @@ class EngineAgentExhaustedError(EngineError):
     """Raised when an agent hits the consecutive-LLM-failure circuit breaker."""
 
 
+class EngineAgentRefusedError(EngineError):
+    """Raised when an agent exhausts configured model-refusal retries."""
+
+
 class EngineMaxDepthExceededError(EngineError):
     """Raised when subagent spawn attempted beyond maximum_depth."""
 

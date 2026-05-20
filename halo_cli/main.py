@@ -44,6 +44,7 @@ def _make_config(
     max_turns: int,
     max_parallel: int,
     reasoning_effort: ReasoningEffort | None,
+    refusal_retries: int,
 ) -> EngineConfig:
     # One ModelConfig per role so each is independently tunable. Compaction
     # intentionally skips reasoning_effort — it's a deterministic summarizer.
@@ -56,11 +57,13 @@ def _make_config(
         name="root",
         model=root_model,
         maximum_turns=max_turns,
+        refusal_retries=refusal_retries,
     )
     subagent = AgentConfig(
         name="sub",
         model=subagent_model,
         maximum_turns=max_turns,
+        refusal_retries=refusal_retries,
     )
 
     return EngineConfig(
@@ -101,6 +104,12 @@ def _run(
     max_depth: int = typer.Option(2, "--max-depth", min=0),
     max_turns: int = typer.Option(20, "--max-turns", min=1),
     max_parallel: int = typer.Option(2, "--max-parallel", min=1),
+    refusal_retries: int = typer.Option(
+        0,
+        "--refusal-retries",
+        min=0,
+        help="Retry an agent model request this many times when the model refuses.",
+    ),
     reasoning_effort: str | None = typer.Option(
         None,
         "--reasoning-effort",
@@ -133,6 +142,7 @@ def _run(
         max_turns,
         max_parallel,
         _parse_reasoning_effort(reasoning_effort),
+        refusal_retries,
     )
     asyncio.run(_stream(trace_path, prompt, cfg, telemetry=telemetry))
 

@@ -9,15 +9,24 @@ from engine.agents.agent_context import AgentContext
 from engine.agents.agent_execution import AgentExecution
 from engine.agents.engine_output_bus import EngineOutputBus
 from engine.agents.openai_agent_runner import OpenAiAgentRunner, configure_default_sdk_client
-from engine.errors import EngineAgentExhaustedError
+from engine.errors import EngineAgentExhaustedError, EngineAgentRefusedError
 from engine.model_config import ModelConfig
 from engine.model_provider_config import ModelProviderConfig
-from tests._sdk_events import assistant_message_event
+from tests._sdk_events import (
+    assistant_message_event,
+    assistant_refusal_event,
+    tool_call_event,
+    tool_output_event,
+)
 
 
 def _assistant_event(text: str):
     """Local alias keeping the test bodies short."""
     return assistant_message_event(item_id="m1", text=text)
+
+
+def _refusal_event(text: str):
+    return assistant_refusal_event(item_id="r1", refusal=text)
 
 
 class _FakeStream:
@@ -76,6 +85,229 @@ async def test_runner_emits_final_output_and_updates_context() -> None:
     events = [e async for e in bus.stream()]
     assert any(getattr(e, "final", False) for e in events)
     assert any(item.role == "assistant" for item in ctx.items)
+
+
+@pytest.mark.asyncio
+async def test_runner_retries_refusal_without_emitting_refusal() -> None:
+    bus = EngineOutputBus()
+    ctx = _context()
+    execution = AgentExecution(
+        agent_id="root",
+        agent_name="root",
+        depth=0,
+        parent_agent_id=None,
+        parent_tool_call_id=None,
+    )
+    calls: list[list[dict]] = []
+
+    async def fake_run_streamed(*, agent, input, context):
+        calls.append(input)
+        if len(calls) == 1:
+            return _FakeStream(
+                [_refusal_event("I'm sorry, but I cannot assist with that request.")]
+            )
+        return _FakeStream([_assistant_event("answer\n<final/>")])
+
+    async def noop_compactor(_):
+        return ""
+
+    runner = OpenAiAgentRunner(
+        run_streamed=fake_run_streamed,
+        compactor_factory=lambda _: noop_compactor,
+        refusal_retries=1,
+    )
+
+    await runner.run(
+        sdk_agent=object(),
+        agent_context=ctx,
+        agent_execution=execution,
+        output_bus=bus,
+        is_root=True,
+    )
+
+    await bus.close()
+    events = [e async for e in bus.stream()]
+    assert len(calls) == 2
+    assert calls[0] == []
+    assert calls[1] == [
+        {
+            "role": "user",
+            "content": (
+                "The previous model response was a refusal. Retry the request using the "
+                "available context and tools. If you can answer, provide the final answer "
+                "and end it with <final/>."
+            ),
+        }
+    ]
+    assert len(events) == 1
+    assert events[0].item.content == "answer"
+    assert events[0].final is True
+    assert [item.content for item in ctx.items] == ["answer"]
+
+
+@pytest.mark.asyncio
+async def test_runner_does_not_retry_when_refusal_is_not_last_message() -> None:
+    bus = EngineOutputBus()
+    ctx = _context()
+    execution = AgentExecution(
+        agent_id="root",
+        agent_name="root",
+        depth=0,
+        parent_agent_id=None,
+        parent_tool_call_id=None,
+    )
+    call_count = 0
+
+    async def fake_run_streamed(*, agent, input, context):
+        nonlocal call_count
+        call_count += 1
+        return _FakeStream(
+            [
+                _refusal_event("I'm sorry, but I cannot assist with that request."),
+                _assistant_event("answer\n<final/>"),
+            ]
+        )
+
+    async def noop_compactor(_):
+        return ""
+
+    runner = OpenAiAgentRunner(
+        run_streamed=fake_run_streamed,
+        compactor_factory=lambda _: noop_compactor,
+        refusal_retries=1,
+    )
+
+    await runner.run(
+        sdk_agent=object(),
+        agent_context=ctx,
+        agent_execution=execution,
+        output_bus=bus,
+        is_root=True,
+    )
+
+    await bus.close()
+    events = [e async for e in bus.stream()]
+    assert call_count == 1
+    assert len(events) == 1
+    assert events[0].item.content == "answer"
+    assert events[0].final is True
+    assert [item.content for item in ctx.items] == ["answer"]
+
+
+@pytest.mark.asyncio
+async def test_runner_raises_after_refusal_retries_exhausted() -> None:
+    bus = EngineOutputBus()
+    ctx = _context()
+    execution = AgentExecution(
+        agent_id="root",
+        agent_name="root",
+        depth=0,
+        parent_agent_id=None,
+        parent_tool_call_id=None,
+    )
+    call_count = 0
+
+    async def fake_run_streamed(*, agent, input, context):
+        nonlocal call_count
+        call_count += 1
+        return _FakeStream([_refusal_event("I'm sorry, but I cannot assist with that request.")])
+
+    async def noop_compactor(_):
+        return ""
+
+    runner = OpenAiAgentRunner(
+        run_streamed=fake_run_streamed,
+        compactor_factory=lambda _: noop_compactor,
+        refusal_retries=1,
+    )
+
+    with pytest.raises(EngineAgentRefusedError):
+        await runner.run(
+            sdk_agent=object(),
+            agent_context=ctx,
+            agent_execution=execution,
+            output_bus=bus,
+            is_root=True,
+        )
+    assert call_count == 2
+    assert ctx.items == []
+
+
+@pytest.mark.asyncio
+async def test_runner_retries_refusal_after_tool_result_without_replaying_tool_output() -> None:
+    bus = EngineOutputBus()
+    ctx = _context()
+    execution = AgentExecution(
+        agent_id="root",
+        agent_name="root",
+        depth=0,
+        parent_agent_id=None,
+        parent_tool_call_id=None,
+    )
+    calls: list[list[dict]] = []
+
+    async def fake_run_streamed(*, agent, input, context):
+        calls.append(input)
+        if len(calls) == 1:
+            return _FakeStream(
+                [
+                    tool_call_event(call_id="call_1", name="query_traces", arguments='{"q":"x"}'),
+                    tool_output_event(call_id="call_1", output="trace result"),
+                    _refusal_event("I'm sorry, but I cannot assist with that request."),
+                ]
+            )
+        return _FakeStream([_assistant_event("answer\n<final/>")])
+
+    async def noop_compactor(_):
+        return ""
+
+    runner = OpenAiAgentRunner(
+        run_streamed=fake_run_streamed,
+        compactor_factory=lambda _: noop_compactor,
+        refusal_retries=1,
+    )
+
+    await runner.run(
+        sdk_agent=object(),
+        agent_context=ctx,
+        agent_execution=execution,
+        output_bus=bus,
+        is_root=True,
+    )
+
+    await bus.close()
+    events = [e async for e in bus.stream()]
+    assert len(calls) == 2
+    assert calls[1] == [
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "query_traces", "arguments": '{"q":"x"}'},
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "content": "trace result",
+            "tool_call_id": "call_1",
+            "name": "query_traces",
+        },
+        {
+            "role": "user",
+            "content": (
+                "The previous model response was a refusal. Retry the request using the "
+                "available context and tools. If you can answer, provide the final answer "
+                "and end it with <final/>."
+            ),
+        },
+    ]
+    assert [event.item.role for event in events] == ["assistant", "tool", "assistant"]
+    assert events[-1].item.content == "answer"
+    assert execution.tool_calls_made == 1
+    assert execution.turns_used == 1
 
 
 @pytest.mark.asyncio

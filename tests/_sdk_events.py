@@ -20,6 +20,7 @@ from agents.stream_events import RawResponsesStreamEvent, RunItemStreamEvent
 from openai.types.responses import (
     ResponseFunctionToolCall,
     ResponseOutputMessage,
+    ResponseOutputRefusal,
     ResponseOutputText,
     ResponseTextDeltaEvent,
 )
@@ -38,6 +39,21 @@ def assistant_message_event(*, item_id: str, text: str) -> RunItemStreamEvent:
         role="assistant",
         status="completed",
         content=[ResponseOutputText(type="output_text", text=text, annotations=[])],
+    )
+    return RunItemStreamEvent(
+        name="message_output_created",
+        item=MessageOutputItem(agent=SHARED_AGENT, raw_item=raw),
+    )
+
+
+def assistant_refusal_event(*, item_id: str, refusal: str) -> RunItemStreamEvent:
+    """Build a real ``RunItemStreamEvent`` carrying a structured refusal."""
+    raw = ResponseOutputMessage(
+        id=item_id,
+        type="message",
+        role="assistant",
+        status="completed",
+        content=[ResponseOutputRefusal(type="refusal", refusal=refusal)],
     )
     return RunItemStreamEvent(
         name="message_output_created",

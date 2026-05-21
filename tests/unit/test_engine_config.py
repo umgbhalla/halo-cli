@@ -25,6 +25,8 @@ def test_engine_config_defaults() -> None:
     assert cfg.tool_call_compaction_keep_last_turns == 3
     assert cfg.maximum_depth == 2
     assert cfg.maximum_parallel_subagents == 4
+    assert cfg.root_agent.refusal_retries == 0
+    assert cfg.subagent.refusal_retries == 0
     assert cfg.model_provider == ModelProviderConfig()
     assert cfg.model_provider.base_url is None
     assert cfg.model_provider.api_key is None

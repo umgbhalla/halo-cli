@@ -128,6 +128,7 @@ async def stream_engine_async(
                 agent_runner = OpenAiAgentRunner(
                     run_streamed=_run_streamed,
                     compactor_factory=build_compactor_factory(engine_config),
+                    refusal_retries=engine_config.root_agent.refusal_retries,
                 )
                 try:
                     await agent_runner.run(

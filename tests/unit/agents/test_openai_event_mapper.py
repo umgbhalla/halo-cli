@@ -4,6 +4,7 @@ from engine.agents.agent_execution import AgentExecution
 from engine.agents.openai_event_mapper import OpenAiEventMapper
 from tests._sdk_events import (
     assistant_message_event,
+    assistant_refusal_event,
     text_delta_event,
     tool_call_event,
     tool_output_event,
@@ -58,6 +59,36 @@ def test_subagent_assistant_final_sentinel_ignored() -> None:
     assert mapped.output_item is not None
     assert mapped.output_item.final is False
     assert "sub done" in (mapped.output_item.item.content or "")
+
+
+def test_structured_refusal_maps_without_output_or_context() -> None:
+    mapper = OpenAiEventMapper()
+    mapped = mapper.to_mapped_event(
+        assistant_refusal_event(
+            item_id="msg_refusal", refusal="I'm sorry, but I cannot assist with that request."
+        ),
+        execution=_exec(),
+        is_root=True,
+    )
+    assert mapped.refusal_text == "I'm sorry, but I cannot assist with that request."
+    assert mapped.context_item is None
+    assert mapped.output_item is None
+    assert mapped.delta is None
+
+
+def test_text_refusal_maps_without_output_or_context() -> None:
+    mapper = OpenAiEventMapper()
+    mapped = mapper.to_mapped_event(
+        assistant_message_event(
+            item_id="msg_refusal", text="I'm sorry, but I cannot assist with that request."
+        ),
+        execution=_exec(),
+        is_root=True,
+    )
+    assert mapped.refusal_text == "I'm sorry, but I cannot assist with that request."
+    assert mapped.context_item is None
+    assert mapped.output_item is None
+    assert mapped.delta is None
 
 
 def test_tool_call_item_extracts_name_and_arguments() -> None:

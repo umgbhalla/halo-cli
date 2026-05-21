@@ -267,6 +267,7 @@ def _build_subagent_as_tool(
             runner = OpenAiAgentRunner(
                 run_streamed=_run_streamed,
                 compactor_factory=build_compactor_factory(engine_config),
+                refusal_retries=engine_config.subagent.refusal_retries,
             )
 
             # ``agent_id="halo"`` matches the root span (see

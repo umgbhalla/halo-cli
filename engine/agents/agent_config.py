@@ -18,3 +18,4 @@ class AgentConfig(BaseModel):
     name: str
     model: ModelConfig
     maximum_turns: int = Field(gt=0)
+    refusal_retries: int = Field(default=0, ge=0)

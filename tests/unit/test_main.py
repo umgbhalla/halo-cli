@@ -150,17 +150,23 @@ async def test_engine_installs_sdk_default_with_tracing_disabled(
 
     stub_client_instance: _StubAsyncOpenAI | None = None
 
-    def _capture_client(**kwargs: object) -> _StubAsyncOpenAI:
+    def _capture_client(
+        *,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        default_headers: dict[str, str] | None = None,
+    ) -> _StubAsyncOpenAI:
         nonlocal stub_client_instance
-        stub_client_instance = _StubAsyncOpenAI(**kwargs)
+        stub_client_instance = _StubAsyncOpenAI(
+            base_url=base_url, api_key=api_key, default_headers=default_headers
+        )
         return stub_client_instance
 
+    def _record_set_default(client: object, *, use_for_tracing: bool) -> None:
+        set_default_calls.append((client, {"use_for_tracing": use_for_tracing}))
+
     monkeypatch.setattr(engine_main, "AsyncOpenAI", _capture_client)
-    monkeypatch.setattr(
-        engine_main,
-        "set_default_openai_client",
-        lambda client, **kw: set_default_calls.append((client, kw)),
-    )
+    monkeypatch.setattr(engine_main, "set_default_openai_client", _record_set_default)
     monkeypatch.setattr(agent_context_module, "compact", _noop_compact)
 
     runner = FakeRunner([_assistant_text("Final.\n<final/>")])

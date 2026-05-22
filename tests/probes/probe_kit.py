@@ -118,13 +118,21 @@ class FakeRunner:
         starting_agent: Any,
         input: Any,
         context: Any = None,
-        **kwargs: Any,
+        max_turns: int,
+        run_config: Any,
     ) -> Any:
-        # Record every kwarg the engine forwards. Probes inspect
+        # Record each kwarg the engine forwards. Probes inspect
         # `runner.calls[i]` to verify the engine passed what it should
-        # have (e.g. max_turns from AgentConfig).
+        # have (e.g. max_turns from AgentConfig, the assembled run_config
+        # with its TurnCounterInputFilter).
         self.calls.append(
-            {"starting_agent": starting_agent, "input": input, "context": context, **kwargs}
+            {
+                "starting_agent": starting_agent,
+                "input": input,
+                "context": context,
+                "max_turns": max_turns,
+                "run_config": run_config,
+            }
         )
         if not self._programs:
             raise RuntimeError("FakeRunner exhausted; called more times than programs supplied")

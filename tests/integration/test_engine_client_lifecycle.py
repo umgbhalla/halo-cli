@@ -63,6 +63,29 @@ class _StubAsyncOpenAI:
         self.close = AsyncMock()
 
 
+def _install_stub_client(monkeypatch: pytest.MonkeyPatch) -> _StubAsyncOpenAI:
+    """Patch ``engine.main.AsyncOpenAI`` to return a fresh stub and short-circuit
+    ``set_default_openai_client``. Returns the stub so the test can assert on
+    ``close`` lifecycle."""
+    stub_client = _StubAsyncOpenAI()
+
+    def _build_stub(
+        *,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        default_headers: dict[str, str] | None = None,
+    ) -> _StubAsyncOpenAI:
+        del base_url, api_key, default_headers
+        return stub_client
+
+    def _noop_set_default(client: object, *, use_for_tracing: bool) -> None:
+        del client, use_for_tracing
+
+    monkeypatch.setattr(engine_main, "AsyncOpenAI", _build_stub)
+    monkeypatch.setattr(engine_main, "set_default_openai_client", _noop_set_default)
+    return stub_client
+
+
 @pytest.mark.asyncio
 async def test_client_closed_on_normal_exit(
     monkeypatch: pytest.MonkeyPatch,
@@ -72,9 +95,7 @@ async def test_client_closed_on_normal_exit(
     trace_path = tmp_path / "traces.jsonl"
     trace_path.write_bytes((fixtures_dir / "tiny_traces.jsonl").read_bytes())
 
-    stub_client = _StubAsyncOpenAI()
-    monkeypatch.setattr(engine_main, "AsyncOpenAI", lambda **kw: stub_client)
-    monkeypatch.setattr(engine_main, "set_default_openai_client", lambda *a, **kw: None)
+    stub_client = _install_stub_client(monkeypatch)
     monkeypatch.setattr(agent_context_module, "compact", _noop_compact)
 
     runner = FakeRunner([_assistant_text("Final answer.\n<final/>")])
@@ -98,9 +119,7 @@ async def test_client_closed_on_early_consumer_break(
     trace_path = tmp_path / "traces.jsonl"
     trace_path.write_bytes((fixtures_dir / "tiny_traces.jsonl").read_bytes())
 
-    stub_client = _StubAsyncOpenAI()
-    monkeypatch.setattr(engine_main, "AsyncOpenAI", lambda **kw: stub_client)
-    monkeypatch.setattr(engine_main, "set_default_openai_client", lambda *a, **kw: None)
+    stub_client = _install_stub_client(monkeypatch)
     monkeypatch.setattr(agent_context_module, "compact", _noop_compact)
 
     runner = FakeRunner([_assistant_text("Final answer.\n<final/>")])

@@ -49,9 +49,21 @@ def _check(condition: bool, description: str, observed: str = "") -> None:
 
 
 class _FakeCompletions:
-    """Duck-typed stand-in for ``AsyncOpenAI().chat.completions``."""
+    """Duck-typed stand-in for ``AsyncOpenAI().chat.completions``.
 
-    async def create(self, **_kwargs: Any) -> Any:
+    Declares the keyword-only params ``compact()`` actually forwards so a
+    signature change in ``engine.agents.compactor.compact`` breaks visibly
+    instead of being absorbed by a catchall.
+    """
+
+    async def create(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, str]],
+        temperature: Any,
+    ) -> Any:
+        del model, messages, temperature
         return SimpleNamespace(
             choices=[SimpleNamespace(message=SimpleNamespace(content="SUMMARY"))]
         )

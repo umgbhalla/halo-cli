@@ -3,8 +3,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from agents import FunctionTool, RunContextWrapper
 from pydantic import BaseModel, ConfigDict
+
+from engine.agents.openai_sdk_client import FunctionTool, RunContextWrapper
 
 if TYPE_CHECKING:
     from engine.agents.agent_context import AgentContext

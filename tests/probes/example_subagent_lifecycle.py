@@ -4,8 +4,9 @@ The ``FakeRunner`` seam stops at the LLM, so end-to-end ``run_with_fake``
 probes cannot drive an actual ``call_subagent`` invocation through the SDK.
 The README points at the correct workaround: call
 ``_build_subagent_as_tool(...).on_invoke_tool(ctx, raw_arguments)`` directly,
-with the kit's ``FakeRunner`` installed on ``run_state.runner`` so the
-inner ``OpenAiAgentRunner.run`` finds a scripted child stream.
+wrapped in ``install_fake_runner(FakeRunner(...))`` so the inner
+``OpenAiAgentRunner.run`` finds a scripted child stream when it reaches
+``agents.Runner.run_streamed``.
 
 The SDK's normal tool-dispatch path constructs an ``agents.tool_context.ToolContext``
 (with ``tool_call_id``, ``tool_name``, ``agent``, etc.) and passes it as the
@@ -30,8 +31,10 @@ Pathways probed:
 
 Conventions worth stealing from this file:
 
-- Use ``make_run_state(cfg, runner=FakeRunner(...))`` to get a fully wired
-  ``EngineRunState`` without going through ``stream_engine_async``.
+- Use ``make_run_state(cfg)`` to get a fully wired ``EngineRunState`` without
+  going through ``stream_engine_async``. Wrap the section that invokes the
+  tool in ``with install_fake_runner(FakeRunner(...)) as runner:`` so the
+  scripted runner is active during ``on_invoke_tool``.
 - Hand-build a parent ``AgentExecution``, ``state.register(...)`` it, AND
   pass it as ``parent_execution`` to ``_build_subagent_as_tool``. The closure
   captures it for ``parent_agent_id`` stamping on every child invocation.
@@ -60,6 +63,7 @@ from engine.tools.subagent_tool_factory import _build_subagent_as_tool
 from tests.probes.probe_kit import (
     FakeRunner,
     check_raises,
+    install_fake_runner,
     make_assistant_text,
     make_checker,
     make_default_config,
@@ -114,7 +118,7 @@ async def probe_invocation_returns_subagent_result_json() -> None:
     runner = FakeRunner(
         [make_assistant_text("the subagent's reasoned answer\n", item_id="sub-msg-1")],
     )
-    state = await make_run_state(cfg, runner=runner)
+    state = await make_run_state(cfg)
     root = _register_root(state)
 
     semaphore = {
@@ -129,7 +133,8 @@ async def probe_invocation_returns_subagent_result_json() -> None:
     )
     raw_args = json.dumps({"input": "what is the answer?"})
     ctx = _make_fake_tool_ctx(tool_call_id="parent-call-aaaa", tool_arguments=raw_args)
-    result_json = await subagent_tool.on_invoke_tool(ctx, raw_args)
+    with install_fake_runner(runner):
+        result_json = await subagent_tool.on_invoke_tool(ctx, raw_args)
     parsed = json.loads(result_json)
 
     check(
@@ -157,7 +162,7 @@ async def probe_child_execution_registered_with_correct_metadata() -> None:
     runner = FakeRunner(
         [make_assistant_text("ok\n", item_id="sub-msg-1")],
     )
-    state = await make_run_state(cfg, runner=runner)
+    state = await make_run_state(cfg)
     root = _register_root(state, agent_id="root-bbbb")
 
     semaphore = {
@@ -171,7 +176,8 @@ async def probe_child_execution_registered_with_correct_metadata() -> None:
         parent_execution=root,
     )
     ctx = _make_fake_tool_ctx(tool_call_id="parent-call-bbbb")
-    await subagent_tool.on_invoke_tool(ctx, json.dumps({"input": "delegate this"}))
+    with install_fake_runner(runner):
+        await subagent_tool.on_invoke_tool(ctx, json.dumps({"input": "delegate this"}))
 
     children = [ex for aid, ex in state.executions_by_agent_id.items() if aid.startswith("sub-")]
     check(
@@ -212,7 +218,7 @@ async def probe_child_emits_items_at_depth_1() -> None:
     runner = FakeRunner(
         [make_assistant_text("subagent reply\n", item_id="sub-msg-1")],
     )
-    state = await make_run_state(cfg, runner=runner)
+    state = await make_run_state(cfg)
     root = _register_root(state, agent_id="root-cccc")
 
     semaphore = {
@@ -226,7 +232,8 @@ async def probe_child_emits_items_at_depth_1() -> None:
         parent_execution=root,
     )
     ctx = _make_fake_tool_ctx(tool_call_id="parent-call-cccc")
-    await subagent_tool.on_invoke_tool(ctx, json.dumps({"input": "ask the child"}))
+    with install_fake_runner(runner):
+        await subagent_tool.on_invoke_tool(ctx, json.dumps({"input": "ask the child"}))
     events = await _drain_bus(state)
 
     depth_one_items = [ev for ev in events if isinstance(ev, AgentOutputItem) and ev.depth == 1]
@@ -264,7 +271,7 @@ async def probe_depth_guard_raises_before_any_sdk_call() -> None:
     runner = FakeRunner(
         [make_assistant_text("never reached\n", item_id="x")],
     )
-    state = await make_run_state(cfg, runner=runner)
+    state = await make_run_state(cfg)
     root = _register_root(state, agent_id="root-dddd")
 
     semaphore = {
@@ -278,10 +285,11 @@ async def probe_depth_guard_raises_before_any_sdk_call() -> None:
         parent_execution=root,
     )
 
-    exc = await check_raises(
-        lambda: over_depth_tool.on_invoke_tool(None, json.dumps({"input": "should not run"})),
-        EngineMaxDepthExceededError,
-    )
+    with install_fake_runner(runner):
+        exc = await check_raises(
+            lambda: over_depth_tool.on_invoke_tool(None, json.dumps({"input": "should not run"})),
+            EngineMaxDepthExceededError,
+        )
     check(
         exc is not None,
         "depth-guard: invoking child_depth > maximum_depth raises EngineMaxDepthExceededError",

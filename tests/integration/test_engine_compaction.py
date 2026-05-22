@@ -1,35 +1,18 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import pytest
 
+import engine.agents.agent_context as agent_context_module
 import engine.main as engine_main
 from engine.agents.agent_config import AgentConfig
+from engine.agents.agent_context_items import AgentContextItem
 from engine.engine_config import EngineConfig
 from engine.model_config import ModelConfig
 from engine.models.messages import AgentMessage
 from tests._sdk_events import assistant_message_event
-
-
-class _FakeStream:
-    def __init__(self, events: list[Any]) -> None:
-        self._events = events
-
-    async def stream_events(self):
-        for event in self._events:
-            yield event
-
-
-class _FakeRunner:
-    def __init__(self, events: list[Any]) -> None:
-        self.calls: list[dict[str, Any]] = []
-        self._events = events
-
-    def run_streamed(self, **kwargs: Any) -> _FakeStream:
-        self.calls.append(kwargs)
-        return _FakeStream(self._events)
+from tests.probes.probe_kit import FakeRunner
 
 
 def _assistant_text(text: str):
@@ -65,24 +48,19 @@ async def test_engine_compaction_uses_configured_compactor(
 
     compacted_items: list[tuple[str, str]] = []
 
-    def fake_compactor_factory(_config: EngineConfig):
-        def factory(_execution):
-            async def compact(item):
-                compacted_items.append((item.item_id, item.role))
-                return f"summary for {item.item_id}"
+    async def fake_compact(*, client, compaction_model, item: AgentContextItem) -> str:
+        del client, compaction_model
+        compacted_items.append((item.item_id, item.role))
+        return f"summary for {item.item_id}"
 
-            return compact
+    monkeypatch.setattr(agent_context_module, "compact", fake_compact)
 
-        return factory
-
-    monkeypatch.setattr(engine_main, "build_compactor_factory", fake_compactor_factory)
-
-    runner = _FakeRunner([_assistant_text("Final answer.\n<final/>")])
+    runner = FakeRunner([_assistant_text("Final answer.\n<final/>")])
+    monkeypatch.setattr("agents.Runner.run_streamed", runner.run_streamed)
     results = await engine_main.run_engine_async(
         [AgentMessage(role="user", content="Summarize the dataset.")],
         _config(),
         trace_path,
-        runner=runner,
     )
 
     assert any(item.final for item in results)

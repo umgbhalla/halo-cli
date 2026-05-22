@@ -24,6 +24,7 @@ from engine.agents.turn_counter import TurnCounterInputFilter
 from engine.tools.subagent_tool_factory import _build_subagent_as_tool
 from tests.probes.probe_kit import (
     FakeRunner,
+    install_fake_runner,
     make_assistant_text,
     make_default_config,
     make_run_state,
@@ -61,7 +62,7 @@ async def test_subagent_gets_its_own_filter_instance() -> None:
     does not dispatch SDK FunctionTools — see tests/probes/example_subagent_lifecycle.py."""
     cfg = make_default_config(maximum_depth=1)
     runner = FakeRunner([make_assistant_text("sub answered\n", item_id="sub-msg-1")])
-    state = await make_run_state(cfg, runner=runner)
+    state = await make_run_state(cfg)
 
     root = AgentExecution(
         agent_id="root-x",
@@ -90,7 +91,8 @@ async def test_subagent_gets_its_own_filter_instance() -> None:
         tool_call_id="parent-call-1",
         tool_arguments=raw_args,
     )
-    await subagent_tool.on_invoke_tool(ctx, raw_args)
+    with install_fake_runner(runner):
+        await subagent_tool.on_invoke_tool(ctx, raw_args)
 
     assert len(runner.calls) == 1, f"expected 1 subagent runner call; got {len(runner.calls)}"
     sub_call = runner.calls[0]
@@ -115,7 +117,7 @@ async def test_root_and_subagent_filters_are_distinct_instances() -> None:
     root_filter = root_runner.calls[0]["run_config"].call_model_input_filter
 
     sub_runner = FakeRunner([make_assistant_text("sub done\n", item_id="sub-msg")])
-    state = await make_run_state(cfg, runner=sub_runner)
+    state = await make_run_state(cfg)
     root_exec = AgentExecution(
         agent_id="root-y",
         agent_name="root",
@@ -141,7 +143,8 @@ async def test_root_and_subagent_filters_are_distinct_instances() -> None:
         tool_call_id="parent-call-2",
         tool_arguments=raw_args,
     )
-    await subagent_tool.on_invoke_tool(ctx, raw_args)
+    with install_fake_runner(sub_runner):
+        await subagent_tool.on_invoke_tool(ctx, raw_args)
     sub_filter = sub_runner.calls[0]["run_config"].call_model_input_filter
 
     assert isinstance(root_filter, TurnCounterInputFilter)

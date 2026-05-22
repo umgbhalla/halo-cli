@@ -4,7 +4,6 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from agents import set_default_openai_client
 from openai import (
     APIConnectionError,
     APIStatusError,
@@ -13,38 +12,11 @@ from openai import (
     RateLimitError,
 )
 
-from engine.agents.agent_context import AgentContext, Compactor
+from engine.agents.agent_context import AgentContext
 from engine.agents.agent_execution import AgentExecution
 from engine.agents.engine_output_bus import EngineOutputBus
 from engine.agents.openai_event_mapper import OpenAiEventMapper
 from engine.errors import EngineAgentExhaustedError, EngineAgentRefusedError
-from engine.model_provider_config import ModelProviderConfig
-
-
-def configure_default_sdk_client(provider: ModelProviderConfig) -> None:
-    """Bind the OpenAI Agents SDK's default client to the configured endpoint.
-
-    The SDK uses a process-global client, so this is best-effort for callers
-    running multiple engines in one process. We only override when at least
-    one of ``base_url`` / ``api_key`` / ``default_headers`` is set; otherwise
-    the SDK keeps using its env-driven default.
-
-    ``use_for_tracing=False`` keeps the SDK's tracing exporter on its
-    default OpenAI path. Without this, redirecting model calls to a non-
-    OpenAI provider (vLLM, Ollama, OpenRouter, etc.) also redirects
-    tracing POSTs there — those endpoints don't speak the tracing API,
-    causing spurious errors or silent trace loss.
-    """
-    if provider.base_url is None and provider.api_key is None and provider.default_headers is None:
-        return
-    set_default_openai_client(
-        AsyncOpenAI(
-            base_url=provider.base_url,
-            api_key=provider.api_key,
-            default_headers=provider.default_headers,
-        ),
-        use_for_tracing=False,
-    )
 
 
 def _is_retriable_llm_error(exc: BaseException) -> bool:
@@ -59,7 +31,6 @@ def _is_retriable_llm_error(exc: BaseException) -> bool:
 MAX_CONSECUTIVE_LLM_FAILURES = 10
 
 RunStreamedCallable = Callable[..., Awaitable[Any]]
-CompactorFactory = Callable[[AgentExecution], Compactor]
 logger = logging.getLogger(__name__)
 
 
@@ -76,15 +47,15 @@ class OpenAiAgentRunner:
     def __init__(
         self,
         run_streamed: RunStreamedCallable,
-        compactor_factory: CompactorFactory,
+        client: AsyncOpenAI,
         event_mapper: OpenAiEventMapper | None = None,
         refusal_retries: int = 0,
     ) -> None:
         """``run_streamed`` is injected so root and subagent paths can supply their own
-        max_turns and starting agent. ``compactor_factory`` produces a per-execution
-        compactor bound to whatever model EngineConfig pins for compaction."""
+        max_turns and starting agent. ``client`` is the per-run AsyncOpenAI used for
+        compaction calls."""
         self._run_streamed = run_streamed
-        self._compactor_factory = compactor_factory
+        self._client = client
         self._mapper = event_mapper or OpenAiEventMapper()
         self._refusal_retries = refusal_retries
 
@@ -188,7 +159,7 @@ class OpenAiAgentRunner:
                 )
 
             agent_execution.record_llm_success()
-            await agent_context.compact_old_items(self._compactor_factory(agent_execution))
+            await agent_context.compact_old_items(self._client)
             return
 
         raise EngineAgentExhaustedError(

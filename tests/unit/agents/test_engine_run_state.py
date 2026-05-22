@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from openai import AsyncOpenAI
 
 from engine.agents.agent_config import AgentConfig
 from engine.agents.agent_execution import AgentExecution
@@ -43,6 +44,7 @@ async def test_run_state_holds_registries(tmp_path: Path, fixtures_dir: Path) ->
         output_bus=EngineOutputBus(),
         config=_cfg(),
         sandbox=None,
+        openai_client=AsyncOpenAI(api_key="test"),
     )
 
     exec_ = AgentExecution(

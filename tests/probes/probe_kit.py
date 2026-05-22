@@ -4,11 +4,17 @@ This module is the entire vocabulary a probe script needs. Compose these
 primitives; do not reach into engine internals or use third-party mocking
 libraries.
 
-The seam is ``RunnerProtocol`` (see ``engine.agents.runner_protocol``).
-``FakeRunner`` implements it: each call to ``run_streamed`` consumes one
-scripted *program* — either a list of SDK-shaped events to yield, or an
-exception to raise. ``OpenAiAgentRunner`` then drives the engine through
-those events as if they came from the real SDK.
+The seam is ``agents.Runner.run_streamed``. ``FakeRunner.run_streamed``
+has a matching signature and is installed in place of the real method via
+``install_fake_runner`` (a context manager wrapping ``unittest.mock.patch``).
+Each call consumes one scripted *program* — either a list of SDK-shaped
+events to yield, or an exception to raise. ``OpenAiAgentRunner`` then
+drives the engine through those events as if they came from the real SDK.
+
+``run_with_fake`` does the install for you. For probes that bypass the
+public engine entrypoint (e.g. to drive ``_build_subagent_as_tool``
+directly), wrap the section that runs the engine in
+``with install_fake_runner(fake): ...``.
 
 LIMITATION: ``FakeRunner`` does not invoke registered ``FunctionTool``s in
 response to tool_call events — that's behavior of the real SDK Runner. To
@@ -24,17 +30,20 @@ import asyncio
 import atexit
 import shutil
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from agents.stream_events import RawResponsesStreamEvent, RunItemStreamEvent
+from openai import AsyncOpenAI
 
 from engine.agents.agent_config import AgentConfig
 from engine.agents.agent_context import AgentContext
 from engine.agents.engine_output_bus import EngineOutputBus
 from engine.agents.engine_run_state import EngineRunState
-from engine.agents.runner_protocol import RunnerProtocol
 from engine.engine_config import EngineConfig
 from engine.main import stream_engine_async
 from engine.model_config import ModelConfig
@@ -82,15 +91,21 @@ class _FakeStream:
 
 
 class FakeRunner:
-    """Scriptable runner. Each invocation of ``run_streamed`` pops one program
-    from ``programs`` (FIFO) and either yields its events or raises its
-    exception.
+    """Scriptable stand-in for ``agents.Runner.run_streamed``. Each call to
+    ``run_streamed`` pops one program from ``programs`` (FIFO) and either
+    yields its events or raises its exception.
 
     Pass either:
       - ``list[event]`` — the runner yields these events from ``stream_events``
       - ``BaseException`` instance — the runner raises it from ``run_streamed``
 
     ``calls`` records every invocation for after-the-fact assertions.
+
+    Installed in place of ``agents.Runner.run_streamed`` via
+    ``install_fake_runner`` (or pytest ``monkeypatch.setattr``). Both the
+    root and subagent paths call the SAME patched method, so a single
+    FakeRunner can supply programs for the whole tree — pass them in
+    invocation order.
     """
 
     def __init__(self, *programs: list[Any] | BaseException) -> None:
@@ -103,13 +118,21 @@ class FakeRunner:
         starting_agent: Any,
         input: Any,
         context: Any = None,
-        **kwargs: Any,
+        max_turns: int,
+        run_config: Any,
     ) -> Any:
-        # Record every kwarg the engine forwards. Probes inspect
+        # Record each kwarg the engine forwards. Probes inspect
         # `runner.calls[i]` to verify the engine passed what it should
-        # have (e.g. max_turns from AgentConfig).
+        # have (e.g. max_turns from AgentConfig, the assembled run_config
+        # with its TurnCounterInputFilter).
         self.calls.append(
-            {"starting_agent": starting_agent, "input": input, "context": context, **kwargs}
+            {
+                "starting_agent": starting_agent,
+                "input": input,
+                "context": context,
+                "max_turns": max_turns,
+                "run_config": run_config,
+            }
         )
         if not self._programs:
             raise RuntimeError("FakeRunner exhausted; called more times than programs supplied")
@@ -119,8 +142,18 @@ class FakeRunner:
         return _FakeStream(program)
 
 
-# Static type-check that FakeRunner satisfies RunnerProtocol.
-_: RunnerProtocol = FakeRunner()  # type: ignore[assignment]
+@contextmanager
+def install_fake_runner(fake_runner: FakeRunner) -> Iterator[FakeRunner]:
+    """Install ``fake_runner`` in place of ``agents.Runner.run_streamed`` for
+    the duration of the ``with`` block.
+
+    The patch is a class-level attribute replacement, so every call site
+    (root via ``main.py``, subagents via ``subagent_tool_factory.py``) hits
+    the same FakeRunner. Yields the same ``fake_runner`` for convenience so
+    callers can write ``with install_fake_runner(FakeRunner(...)) as f:``.
+    """
+    with patch("agents.Runner.run_streamed", new=fake_runner.run_streamed):
+        yield fake_runner
 
 
 # --- Event builders ----------------------------------------------------------
@@ -212,8 +245,8 @@ def make_default_config(
     model: str = "gpt-5.4-mini",
 ) -> EngineConfig:
     """Sensible defaults for an EngineConfig used in probes.
-    The model name is irrelevant when ``runner=FakeRunner`` is injected
-    (no real LLM call happens), so any string works."""
+    The model name is irrelevant when ``FakeRunner`` is installed via
+    ``install_fake_runner`` (no real LLM call happens), so any string works."""
     agent = AgentConfig(
         name="root",
         model=ModelConfig(name=model),
@@ -288,7 +321,6 @@ async def make_run_state(
     config: EngineConfig | None = None,
     *,
     trace_path: Path | None = None,
-    runner: RunnerProtocol | None = None,
 ) -> EngineRunState:
     """Build a fully-loaded ``EngineRunState`` *without* running the engine.
 
@@ -299,9 +331,8 @@ async def make_run_state(
     copy, so methods that touch the store work normally.
 
     Defaults: ``config = make_default_config()``,
-    ``trace_path = isolated_trace_copy()``. If ``runner`` is given it is
-    installed on the state; otherwise the dataclass default (``agents.Runner``)
-    stays.
+    ``trace_path = isolated_trace_copy()``. To make the subagent path see a
+    scripted runner, wrap the invocation in ``install_fake_runner(...)``.
     """
     cfg = config or make_default_config()
     tp = trace_path or isolated_trace_copy()
@@ -310,15 +341,14 @@ async def make_run_state(
         config=cfg.trace_index,
     )
     store = TraceStore.load(trace_path=tp, index_path=index_path)
-    state = EngineRunState(
+
+    return EngineRunState(
         trace_store=store,
         output_bus=EngineOutputBus(),
         config=cfg,
         sandbox=None,
+        openai_client=AsyncOpenAI(api_key="test"),
     )
-    if runner is not None:
-        state.runner = runner
-    return state
 
 
 # --- ToolContext helper ------------------------------------------------------
@@ -477,6 +507,10 @@ async def run_with_fake(
     ``trace_path = isolated_trace_copy()`` (a temp copy of ``tiny_traces.jsonl``).
     Override any of them when probing a specific pathway.
 
+    The FakeRunner is installed in place of ``agents.Runner.run_streamed``
+    for the duration of the engine run via ``install_fake_runner``, then
+    automatically uninstalled on return.
+
     Never raises. Failures are captured in ``RunResult.error``. ``TimeoutError``
     indicates the engine took longer than ``timeout_seconds`` to emit the next
     event or terminate — usually a deadlock.
@@ -488,16 +522,17 @@ async def run_with_fake(
     result = RunResult()
 
     async def _consume() -> None:
-        async for event in stream_engine_async(msgs, cfg, tp, runner=fake_runner):
+        async for event in stream_engine_async(msgs, cfg, tp):
             result.all_events.append(event)
             if isinstance(event, AgentOutputItem):
                 result.output_items.append(event)
             elif isinstance(event, AgentTextDelta):
                 result.deltas.append(event)
 
-    try:
-        await asyncio.wait_for(_consume(), timeout=timeout_seconds)
-    except BaseException as exc:
-        result.error = exc
+    with install_fake_runner(fake_runner):
+        try:
+            await asyncio.wait_for(_consume(), timeout=timeout_seconds)
+        except BaseException as exc:
+            result.error = exc
 
     return result

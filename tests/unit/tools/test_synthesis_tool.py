@@ -8,7 +8,6 @@ import pytest
 import pytest_asyncio
 
 from engine.model_config import ModelConfig
-from engine.model_provider_config import ModelProviderConfig
 from engine.tools.synthesis_tool import SynthesisTool, SynthesizeTracesArguments
 from engine.tools.tool_protocol import ToolContext
 from engine.traces.models.trace_index_config import TraceIndexConfig
@@ -42,7 +41,6 @@ async def test_synthesis_tool_calls_client_and_returns_summary(ctx: ToolContext)
     )
     tool = SynthesisTool(
         model=ModelConfig(name="claude-haiku-4-5"),
-        model_provider=ModelProviderConfig(),
         client=fake_client,
     )
 
@@ -74,7 +72,6 @@ async def test_synthesis_tool_forwards_explicit_reasoning_effort(
     fake_client = _stub_client_returning("ok")
     tool = SynthesisTool(
         model=ModelConfig(name="gpt-5", reasoning_effort="low"),
-        model_provider=ModelProviderConfig(),
         client=fake_client,
     )
 
@@ -89,7 +86,6 @@ async def test_synthesis_tool_defaults_to_model_max_reasoning(ctx: ToolContext) 
     fake_client = _stub_client_returning("ok")
     tool = SynthesisTool(
         model=ModelConfig(name="gpt-5.5"),
-        model_provider=ModelProviderConfig(),
         client=fake_client,
     )
 
@@ -106,7 +102,6 @@ async def test_synthesis_tool_omits_reasoning_for_non_reasoning_model(
     fake_client = _stub_client_returning("ok")
     tool = SynthesisTool(
         model=ModelConfig(name="claude-opus-4-7"),
-        model_provider=ModelProviderConfig(),
         client=fake_client,
     )
 

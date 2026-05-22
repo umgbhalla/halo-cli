@@ -2,22 +2,22 @@ from __future__ import annotations
 
 import httpx
 import pytest
-from openai import APIConnectionError, BadRequestError
+from openai import APIConnectionError, AsyncOpenAI, BadRequestError
 
-from engine.agents import openai_agent_runner as runner_mod
 from engine.agents.agent_context import AgentContext
 from engine.agents.agent_execution import AgentExecution
 from engine.agents.engine_output_bus import EngineOutputBus
-from engine.agents.openai_agent_runner import OpenAiAgentRunner, configure_default_sdk_client
+from engine.agents.openai_agent_runner import OpenAiAgentRunner
 from engine.errors import EngineAgentExhaustedError, EngineAgentRefusedError
 from engine.model_config import ModelConfig
-from engine.model_provider_config import ModelProviderConfig
 from tests._sdk_events import (
     assistant_message_event,
     assistant_refusal_event,
     tool_call_event,
     tool_output_event,
 )
+
+_DUMMY_CLIENT = AsyncOpenAI(api_key="test")
 
 
 def _assistant_event(text: str):
@@ -62,15 +62,9 @@ async def test_runner_emits_final_output_and_updates_context() -> None:
     async def fake_run_streamed(*, agent, input, context):
         return _FakeStream([_assistant_event("answer\n<final/>")])
 
-    compact_calls: list[int] = []
-
-    async def fake_compactor(item):
-        compact_calls.append(1)
-        return "sum"
-
     runner = OpenAiAgentRunner(
         run_streamed=fake_run_streamed,
-        compactor_factory=lambda _: fake_compactor,
+        client=_DUMMY_CLIENT,
     )
 
     await runner.run(
@@ -108,12 +102,9 @@ async def test_runner_retries_refusal_without_emitting_refusal() -> None:
             )
         return _FakeStream([_assistant_event("answer\n<final/>")])
 
-    async def noop_compactor(_):
-        return ""
-
     runner = OpenAiAgentRunner(
         run_streamed=fake_run_streamed,
-        compactor_factory=lambda _: noop_compactor,
+        client=_DUMMY_CLIENT,
         refusal_retries=1,
     )
 
@@ -165,12 +156,9 @@ async def test_runner_keeps_refusal_retry_prompt_after_transient_retry_call_fail
             raise APIConnectionError(request=fake_request)
         return _FakeStream([_assistant_event("answer\n<final/>")])
 
-    async def noop_compactor(_):
-        return ""
-
     runner = OpenAiAgentRunner(
         run_streamed=fake_run_streamed,
-        compactor_factory=lambda _: noop_compactor,
+        client=_DUMMY_CLIENT,
         refusal_retries=1,
     )
 
@@ -218,12 +206,9 @@ async def test_runner_does_not_retry_when_refusal_is_not_last_message() -> None:
             ]
         )
 
-    async def noop_compactor(_):
-        return ""
-
     runner = OpenAiAgentRunner(
         run_streamed=fake_run_streamed,
-        compactor_factory=lambda _: noop_compactor,
+        client=_DUMMY_CLIENT,
         refusal_retries=1,
     )
 
@@ -262,12 +247,9 @@ async def test_runner_raises_after_refusal_retries_exhausted() -> None:
         call_count += 1
         return _FakeStream([_refusal_event("I'm sorry, but I cannot assist with that request.")])
 
-    async def noop_compactor(_):
-        return ""
-
     runner = OpenAiAgentRunner(
         run_streamed=fake_run_streamed,
-        compactor_factory=lambda _: noop_compactor,
+        client=_DUMMY_CLIENT,
         refusal_retries=1,
     )
 
@@ -308,12 +290,9 @@ async def test_runner_retries_refusal_after_tool_result_without_replaying_tool_o
             )
         return _FakeStream([_assistant_event("answer\n<final/>")])
 
-    async def noop_compactor(_):
-        return ""
-
     runner = OpenAiAgentRunner(
         run_streamed=fake_run_streamed,
-        compactor_factory=lambda _: noop_compactor,
+        client=_DUMMY_CLIENT,
         refusal_retries=1,
     )
 
@@ -373,12 +352,9 @@ async def test_runner_circuit_breaker() -> None:
     async def always_fail(*, agent, input, context):
         raise APIConnectionError(request=fake_request)
 
-    async def noop_compactor(_):
-        return ""
-
     runner = OpenAiAgentRunner(
         run_streamed=always_fail,
-        compactor_factory=lambda _: noop_compactor,
+        client=_DUMMY_CLIENT,
     )
 
     with pytest.raises(EngineAgentExhaustedError):
@@ -416,12 +392,9 @@ async def test_runner_does_not_retry_on_bad_request() -> None:
             body={"error": {"message": "bad field"}},
         )
 
-    async def noop_compactor(_):
-        return ""
-
     runner = OpenAiAgentRunner(
         run_streamed=raise_400,
-        compactor_factory=lambda _: noop_compactor,
+        client=_DUMMY_CLIENT,
     )
 
     with pytest.raises(BadRequestError):
@@ -455,12 +428,9 @@ async def test_runner_retries_on_connection_error_then_fails() -> None:
         call_count += 1
         raise APIConnectionError(request=fake_request)
 
-    async def noop_compactor(_):
-        return ""
-
     runner = OpenAiAgentRunner(
         run_streamed=raise_connection,
-        compactor_factory=lambda _: noop_compactor,
+        client=_DUMMY_CLIENT,
     )
 
     with pytest.raises(EngineAgentExhaustedError):
@@ -506,12 +476,9 @@ async def test_runner_retries_when_stream_iteration_raises_retriable() -> None:
         call_count += 1
         return _RaisingStream(APIConnectionError(request=fake_request))
 
-    async def noop_compactor(_):
-        return ""
-
     runner = OpenAiAgentRunner(
         run_streamed=stream_that_raises,
-        compactor_factory=lambda _: noop_compactor,
+        client=_DUMMY_CLIENT,
     )
 
     with pytest.raises(EngineAgentExhaustedError):
@@ -552,12 +519,9 @@ async def test_runner_propagates_non_retriable_stream_iteration_error() -> None:
             )
         )
 
-    async def noop_compactor(_):
-        return ""
-
     runner = OpenAiAgentRunner(
         run_streamed=stream_that_raises,
-        compactor_factory=lambda _: noop_compactor,
+        client=_DUMMY_CLIENT,
     )
 
     with pytest.raises(BadRequestError):
@@ -614,12 +578,9 @@ async def test_runner_propagates_retriable_iteration_error_after_event_seen() ->
             APIConnectionError(request=fake_request),
         )
 
-    async def noop_compactor(_):
-        return ""
-
     runner = OpenAiAgentRunner(
         run_streamed=stream_that_partially_succeeds,
-        compactor_factory=lambda _: noop_compactor,
+        client=_DUMMY_CLIENT,
     )
 
     with pytest.raises(APIConnectionError):
@@ -634,58 +595,3 @@ async def test_runner_propagates_retriable_iteration_error_after_event_seen() ->
     # The single partial assistant message stays in context exactly once.
     assistant_items = [i for i in ctx.items if i.role == "assistant"]
     assert len(assistant_items) == 1
-
-
-def test_configure_default_sdk_client_noop_when_provider_unset(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[tuple[object, dict]] = []
-    monkeypatch.setattr(
-        runner_mod, "set_default_openai_client", lambda c, **kw: calls.append((c, kw))
-    )
-    configure_default_sdk_client(ModelProviderConfig())
-    assert calls == []
-
-
-def test_configure_default_sdk_client_sets_when_base_url_provided(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[tuple[object, dict]] = []
-    monkeypatch.setattr(
-        runner_mod, "set_default_openai_client", lambda c, **kw: calls.append((c, kw))
-    )
-    configure_default_sdk_client(
-        ModelProviderConfig(base_url="https://example.com/v1/", api_key="sk-x")
-    )
-    assert len(calls) == 1
-    client, kwargs = calls[0]
-    assert str(client.base_url).startswith("https://example.com/v1")
-    # Tracing must NOT be redirected to the model endpoint — see
-    # configure_default_sdk_client docstring.
-    assert kwargs == {"use_for_tracing": False}
-
-
-def test_configure_default_sdk_client_sets_default_headers(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[tuple[object, dict]] = []
-    monkeypatch.setattr(
-        runner_mod, "set_default_openai_client", lambda c, **kw: calls.append((c, kw))
-    )
-    configure_default_sdk_client(
-        ModelProviderConfig(
-            base_url="https://api.inference.net/v1/",
-            api_key="inf-key",
-            default_headers={
-                "x-inference-provider-url": "https://lllm.inference.net/v1",
-                "x-inference-task-id": "halo",
-            },
-        )
-    )
-
-    assert len(calls) == 1
-    client, kwargs = calls[0]
-    assert str(client.base_url).startswith("https://api.inference.net/v1")
-    assert client.default_headers["x-inference-provider-url"] == "https://lllm.inference.net/v1"
-    assert client.default_headers["x-inference-task-id"] == "halo"
-    assert kwargs == {"use_for_tracing": False}

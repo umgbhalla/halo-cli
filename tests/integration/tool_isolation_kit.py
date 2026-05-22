@@ -18,6 +18,8 @@ import os
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from openai import AsyncOpenAI
+
 from engine.agents.agent_config import AgentConfig
 from engine.agents.agent_context import AgentContext
 from engine.agents.agent_execution import AgentExecution
@@ -106,6 +108,11 @@ def wired_tools(
         output_bus=EngineOutputBus(),
         config=cfg,
         sandbox=sandbox,
+        openai_client=AsyncOpenAI(
+            base_url=cfg.model_provider.base_url,
+            api_key=cfg.model_provider.api_key,
+            default_headers=cfg.model_provider.default_headers,
+        ),
     )
     run_state.register(parent_execution)
     semaphores = {d: asyncio.Semaphore(1) for d in range(1, cfg.maximum_depth + 1)}

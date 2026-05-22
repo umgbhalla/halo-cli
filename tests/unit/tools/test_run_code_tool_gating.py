@@ -4,6 +4,8 @@ import asyncio
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from openai import AsyncOpenAI
+
 from engine.agents.agent_config import AgentConfig
 from engine.agents.agent_context import AgentContext
 from engine.agents.agent_execution import AgentExecution
@@ -83,6 +85,7 @@ def _run_state(*, sandbox: Sandbox | None) -> EngineRunState:
     run_state.output_bus = EngineOutputBus()
     run_state.trace_store = MagicMock()
     run_state.sandbox = sandbox
+    run_state.openai_client = AsyncOpenAI(api_key="test")
     return run_state
 
 

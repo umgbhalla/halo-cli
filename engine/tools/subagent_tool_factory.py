@@ -5,14 +5,13 @@ import logging
 import uuid
 from typing import Any
 
-from agents import Agent, FunctionTool, RunConfig, RunContextWrapper, Tool
+from agents import Agent, FunctionTool, RunConfig, RunContextWrapper, Runner, Tool
 from agents.agent_tool_input import AgentAsToolInput
 from agents.tool_context import ToolContext as SdkToolContext
 
 from engine.agents.agent_context import AgentContext
 from engine.agents.agent_context_items import AgentContextItem
 from engine.agents.agent_execution import AgentExecution
-from engine.agents.compactor import build_compactor_factory
 from engine.agents.engine_run_state import EngineRunState
 from engine.agents.openai_agent_runner import OpenAiAgentRunner
 from engine.agents.prompt_templates import render_subagent_system_prompt
@@ -128,7 +127,7 @@ def _child_tools_for_depth(
         to_sdk_function_tool(
             SynthesisTool(
                 model=engine_config.synthesis_model,
-                model_provider=engine_config.model_provider,
+                client=run_state.openai_client,
             ),
             context_factory=make_ctx,
         ),
@@ -256,7 +255,7 @@ def _build_subagent_as_tool(
                         is_root=False,
                     )
                 )
-                return run_state.runner.run_streamed(
+                return Runner.run_streamed(
                     starting_agent=agent,
                     input=input,
                     context=context,
@@ -266,7 +265,7 @@ def _build_subagent_as_tool(
 
             runner = OpenAiAgentRunner(
                 run_streamed=_run_streamed,
-                compactor_factory=build_compactor_factory(engine_config),
+                client=run_state.openai_client,
                 refusal_retries=engine_config.subagent.refusal_retries,
             )
 

@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any
 
 import pytest
 from agents.tool_context import ToolContext as SdkToolContext
+from openai import AsyncOpenAI
 
-import engine.tools.subagent_tool_factory as subagent_factory
 from engine.agents.agent_config import AgentConfig
 from engine.agents.agent_execution import AgentExecution
 from engine.agents.engine_output_bus import EngineOutputBus
@@ -20,25 +19,7 @@ from engine.traces.models.trace_index_config import TraceIndexConfig
 from engine.traces.trace_index_builder import TraceIndexBuilder
 from engine.traces.trace_store import TraceStore
 from tests._sdk_events import assistant_message_event
-
-
-class _FakeStream:
-    def __init__(self, events: list[Any]) -> None:
-        self._events = events
-
-    async def stream_events(self):
-        for event in self._events:
-            yield event
-
-
-class _FakeRunner:
-    def __init__(self, events: list[Any]) -> None:
-        self.calls: list[dict[str, Any]] = []
-        self._events = events
-
-    def run_streamed(self, **kwargs: Any) -> _FakeStream:
-        self.calls.append(kwargs)
-        return _FakeStream(self._events)
+from tests.probes.probe_kit import FakeRunner
 
 
 def _assistant_text(text: str):
@@ -84,26 +65,16 @@ async def test_subagent_tool_streams_child_events_with_parent_linkage(
     )
     trace_store = TraceStore.load(trace_path=trace_path, index_path=index_path)
 
-    def fake_compactor_factory(_config: EngineConfig):
-        def factory(_execution):
-            async def compact(_item):
-                return "summary"
-
-            return compact
-
-        return factory
-
-    monkeypatch.setattr(subagent_factory, "build_compactor_factory", fake_compactor_factory)
-
     cfg = _config()
     output_bus = EngineOutputBus()
-    runner = _FakeRunner([_assistant_text("The dataset has one error trace.")])
+    runner = FakeRunner([_assistant_text("The dataset has one error trace.")])
+    monkeypatch.setattr("agents.Runner.run_streamed", runner.run_streamed)
     run_state = EngineRunState(
         trace_store=trace_store,
         output_bus=output_bus,
         config=cfg,
         sandbox=None,
-        runner=runner,
+        openai_client=AsyncOpenAI(api_key="test"),
     )
     parent_execution = AgentExecution(
         agent_id="root-1",

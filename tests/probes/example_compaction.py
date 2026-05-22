@@ -10,18 +10,26 @@ needed for the core logic):
      summary template — and crucially, a plain-text assistant message
      (NOT a tool-call) should not be rendered as "Compacted tool calls".
 
-Why this matters: ``_render_item`` (engine/agents/agent_context.py:138-142)
+Why this matters: ``_render_item`` (engine/agents/agent_context.py)
 renders ANY compacted assistant as "Compacted tool calls (id: ..., ...)",
 but a plain-text assistant message is classified as a TEXT message
 (``_is_tool_related`` returns False for assistants without tool_calls), so
 it lands in ``text_positions`` and can absolutely be compacted as a text
 overflow. The label is wrong in that case.
+
+Testing technique: ``compact_old_items`` now takes an ``AsyncOpenAI``
+directly and calls the module-level ``compact()`` function. Probes
+inject a duck-typed ``_FakeAsyncOpenAI`` whose ``chat.completions.create``
+returns a fixed marker, and assert against observable post-state
+(``ctx.items[i].is_compacted``) rather than recorded callable calls.
 """
 
 from __future__ import annotations
 
 import asyncio
 import sys
+from types import SimpleNamespace
+from typing import Any
 
 from engine.agents.agent_context import AgentContext
 from engine.agents.agent_context_items import AgentContextItem
@@ -40,16 +48,39 @@ def _check(condition: bool, description: str, observed: str = "") -> None:
         _FAILURES.append(description)
 
 
-class _RecordingCompactor:
-    """A real (non-mock) callable that just records and returns a marker.
-    Not a unittest.mock.Mock — it's a plain class implementing __call__."""
+class _FakeCompletions:
+    """Duck-typed stand-in for ``AsyncOpenAI().chat.completions``.
+
+    Declares the keyword-only params ``compact()`` actually forwards so a
+    signature change in ``engine.agents.compactor.compact`` breaks visibly
+    instead of being absorbed by a catchall.
+    """
+
+    async def create(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, str]],
+        temperature: Any,
+    ) -> Any:
+        del model, messages, temperature
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="SUMMARY"))]
+        )
+
+
+class _FakeAsyncOpenAI:
+    """Duck-typed stand-in for ``AsyncOpenAI``: serves ``compact()`` a
+    deterministic completion without a real network/key.
+    """
 
     def __init__(self) -> None:
-        self.calls: list[AgentContextItem] = []
+        self.chat = SimpleNamespace(completions=_FakeCompletions())
 
-    async def __call__(self, item: AgentContextItem) -> str:
-        self.calls.append(item)
-        return f"SUMMARY[{item.item_id}]"
+
+def _compacted_ids(ctx: AgentContext) -> set[str]:
+    """Observable post-state: which item_ids ended up compacted."""
+    return {it.item_id for it in ctx.items if it.is_compacted}
 
 
 def _make_ctx(
@@ -64,19 +95,18 @@ def _make_ctx(
 
 
 async def probe_no_op_when_under_thresholds() -> None:
-    """No items above the keep_last cap means no compactor calls."""
+    """No items above the keep_last cap means no compaction happens."""
     items = [
         AgentContextItem(item_id="sys-0", role="system", content="sys"),
         AgentContextItem(item_id="u-0", role="user", content="hi"),
     ]
     ctx = _make_ctx(items, keep_text=2, keep_tool=2)
-    rec = _RecordingCompactor()
-    await ctx.compact_old_items(rec)
+    await ctx.compact_old_items(_FakeAsyncOpenAI())  # type: ignore[arg-type]
 
     _check(
-        len(rec.calls) == 0,
-        "noop: no compactor calls when under threshold",
-        observed=f"calls={len(rec.calls)}",
+        _compacted_ids(ctx) == set(),
+        "noop: no items compacted when under threshold",
+        observed=f"compacted={sorted(_compacted_ids(ctx))}",
     )
     _check(all(not it.is_compacted for it in ctx.items), "noop: no items marked is_compacted")
 
@@ -90,8 +120,7 @@ async def probe_system_never_compacted() -> None:
         *[AgentContextItem(item_id=f"u-{i}", role="user", content=f"msg{i}") for i in range(5)],
     ]
     ctx = _make_ctx(items, keep_text=1, keep_tool=2)
-    rec = _RecordingCompactor()
-    await ctx.compact_old_items(rec)
+    await ctx.compact_old_items(_FakeAsyncOpenAI())  # type: ignore[arg-type]
 
     sys_item = ctx.items[0]
     _check(
@@ -100,9 +129,9 @@ async def probe_system_never_compacted() -> None:
         observed=f"is_compacted={sys_item.is_compacted}",
     )
     _check(
-        all(it.role != "system" for it in rec.calls),
-        "sys-immune: compactor never received a system item",
-        observed=f"roles_called={[c.role for c in rec.calls]}",
+        all(it.role != "system" for it in ctx.items if it.is_compacted),
+        "sys-immune: no compacted item has role=system",
+        observed=f"compacted_roles={[it.role for it in ctx.items if it.is_compacted]}",
     )
 
 
@@ -126,14 +155,12 @@ async def probe_text_vs_tool_split() -> None:
         AgentContextItem(item_id="tr-2", role="tool", content="r3", tool_call_id="c2", name="foo"),
     ]
     ctx = _make_ctx(items, keep_text=1, keep_tool=2)
-    rec = _RecordingCompactor()
-    await ctx.compact_old_items(rec)
+    await ctx.compact_old_items(_FakeAsyncOpenAI())  # type: ignore[arg-type]
 
-    compacted_ids = {c.item_id for c in rec.calls}
     _check(
-        compacted_ids == {"u-0", "u-1", "a-0", "tr-0"},
+        _compacted_ids(ctx) == {"u-0", "u-1", "a-0", "tr-0"},
         "split: 2 oldest texts + the 1 oldest tool turn (asst + result) compacted",
-        observed=f"compacted_ids={sorted(compacted_ids)}",
+        observed=f"compacted_ids={sorted(_compacted_ids(ctx))}",
     )
 
 
@@ -154,15 +181,13 @@ async def probe_assistant_text_compacted_label_mismatch() -> None:
         ],
     ]
     ctx = _make_ctx(items, keep_text=1, keep_tool=2)
-    rec = _RecordingCompactor()
-    await ctx.compact_old_items(rec)
+    await ctx.compact_old_items(_FakeAsyncOpenAI())  # type: ignore[arg-type]
 
     # First 3 assistants should be eligible (4 - 1 keep = 3 cutoff).
-    compacted_ids = sorted([c.item_id for c in rec.calls])
     _check(
-        compacted_ids == ["a-0", "a-1", "a-2"],
+        _compacted_ids(ctx) == {"a-0", "a-1", "a-2"},
         "asst-text: 3 oldest plain-text assistants compacted",
-        observed=f"compacted={compacted_ids}",
+        observed=f"compacted={sorted(_compacted_ids(ctx))}",
     )
 
     rendered = ctx.to_messages_array()
@@ -195,8 +220,7 @@ async def probe_assistant_with_tool_calls_renders_tool_calls_label() -> None:
         AgentContextItem(item_id="tr-2", role="tool", content="r2", tool_call_id="c0", name="foo"),
     ]
     ctx = _make_ctx(items, keep_text=1, keep_tool=1)
-    rec = _RecordingCompactor()
-    await ctx.compact_old_items(rec)
+    await ctx.compact_old_items(_FakeAsyncOpenAI())  # type: ignore[arg-type]
 
     rendered = ctx.to_messages_array()
     a0 = rendered[1]  # corresponds to a-0
@@ -225,14 +249,12 @@ async def probe_parallel_tool_calls_compact_as_a_unit() -> None:
         AgentContextItem(item_id="t-1", role="tool", content="r1", tool_call_id="c1", name="foo"),
     ]
     ctx = _make_ctx(items, keep_text=10, keep_tool=1)
-    rec = _RecordingCompactor()
-    await ctx.compact_old_items(rec)
+    await ctx.compact_old_items(_FakeAsyncOpenAI())  # type: ignore[arg-type]
 
-    compacted_ids = {c.item_id for c in rec.calls}
     _check(
-        compacted_ids == {"a-0", "t-0"},
+        _compacted_ids(ctx) == {"a-0", "t-0"},
         "parallel: oldest tool turn (a-0 + its result t-0) compacted as a unit",
-        observed=f"compacted_ids={sorted(compacted_ids)}",
+        observed=f"compacted_ids={sorted(_compacted_ids(ctx))}",
     )
 
 

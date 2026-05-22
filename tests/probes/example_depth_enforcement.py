@@ -19,6 +19,8 @@ from __future__ import annotations
 import asyncio
 import sys
 
+from openai import AsyncOpenAI
+
 from engine.agents.agent_execution import AgentExecution
 from engine.agents.engine_output_bus import EngineOutputBus
 from engine.agents.engine_run_state import EngineRunState
@@ -62,7 +64,7 @@ async def _build_run_state(cfg) -> EngineRunState:
         output_bus=EngineOutputBus(),
         config=cfg,
         sandbox=None,
-        runner=FakeRunner(),
+        openai_client=AsyncOpenAI(api_key="test"),
     )
 
 

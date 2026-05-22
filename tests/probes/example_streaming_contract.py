@@ -20,6 +20,7 @@ from engine.main import run_engine_async
 from engine.models.engine_output import AgentOutputItem, AgentTextDelta
 from tests.probes.probe_kit import (
     FakeRunner,
+    install_fake_runner,
     isolated_trace_copy,
     make_assistant_text,
     make_default_config,
@@ -100,7 +101,8 @@ async def probe_run_engine_async_filters_deltas() -> None:
     msgs = make_default_messages()
     tp = isolated_trace_copy()
 
-    items = await run_engine_async(msgs, cfg, tp, runner=runner)
+    with install_fake_runner(runner):
+        items = await run_engine_async(msgs, cfg, tp)
     _check(
         all(isinstance(it, AgentOutputItem) for it in items),
         "filter: only AgentOutputItem returned by run_engine_async",

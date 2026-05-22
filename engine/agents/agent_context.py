@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING
+
+from openai import AsyncOpenAI
 
 from engine.agents.agent_context_items import AgentContextItem
+from engine.agents.compactor import compact
 from engine.agents.prompt_templates import render_root_system_prompt
 from engine.model_config import ModelConfig
 from engine.models.messages import AgentMessage
 
 if TYPE_CHECKING:
     from engine.engine_config import EngineConfig
-
-Compactor: TypeAlias = Callable[[AgentContextItem], Awaitable[str]]
 
 
 class AgentContext:
@@ -101,7 +101,7 @@ class AgentContext:
         """Render stored items into provider-compatible messages, swapping in summaries for compacted items."""
         return [_render_item(item) for item in self.items]
 
-    async def compact_old_items(self, compactor: "Compactor") -> None:
+    async def compact_old_items(self, client: AsyncOpenAI) -> None:
         """Compact eligible older items in place using two independent keep-last thresholds.
 
         Text messages and tool turns are tracked separately; tool turns (assistant
@@ -128,7 +128,9 @@ class AgentContext:
 
         for idx in sorted(set(eligible)):
             item = self.items[idx]
-            summary = await compactor(item)
+            summary = await compact(
+                client=client, compaction_model=self.compaction_model, item=item
+            )
             self.items[idx] = item.model_copy(
                 update={"is_compacted": True, "compaction_summary": summary}
             )

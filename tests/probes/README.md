@@ -66,9 +66,10 @@ to actually invoke a registered tool function is unreachable from a plain
    `on_invoke_tool` would normally fire a fresh `Runner.run_streamed` for
    the child agent. With `FakeRunner` in place that never happens. To probe
    subagent lifecycle: call `_build_subagent_as_tool(...).on_invoke_tool`
-   directly with a fake `run_state.runner` set up to emit the child's
-   events. That is closer to a unit test than an end-to-end probe — and
-   that's fine, just be honest about what you're probing.
+   directly, wrapped in `with install_fake_runner(FakeRunner(...)):` so the
+   child's `Runner.run_streamed` hits the scripted runner. That is closer
+   to a unit test than an end-to-end probe — and that's fine, just be
+   honest about what you're probing.
 
 If you find yourself needing FakeRunner to reach further (e.g. "I want it
 to invoke registered tools"), **stop and report that**. Do not reach for
@@ -136,8 +137,8 @@ You **MUST NOT**:
      templates for compacted items.
    - `engine/agents/agent_context_items.py` — the shape of a stored item.
    - `engine/agents/engine_output_bus.py` — sequencing and stream lifecycle.
-   - `engine/agents/runner_protocol.py` — the seam itself; small but
-     load-bearing.
+   - `agents.Runner.run_streamed` — the seam itself; probes install
+     `FakeRunner.run_streamed` in its place via `install_fake_runner`.
    - `engine/tools/subagent_tool_factory.py` — depth + subagent
      construction; where `_run_streamed` closures live.
    - `engine/tools/tool_protocol.py` — `ToolContext` shape and the
@@ -370,7 +371,7 @@ reach with the current seam. One bullet per item.
 | "FakeRunner doesn't expose this — let me patch the engine" | If `FakeRunner` can't drive the pathway, the seam is wrong. Stop and report that as a finding. |
 | "I'll wrap this in `try/except` to make it pass" | A `FAIL` is the correct outcome when the engine misbehaves. Report it. |
 | "This is fast — let me put it in `tests/unit/`" | Wrong directory. `tests/unit/` is for pure unit tests of individual modules. Probes go *here*. |
-| "I'll mock the OpenAI client too" | Don't. The seam is `RunnerProtocol`. If you need finer control, ask whether the seam should expose more. |
+| "I'll mock the OpenAI client too" | Don't. The seam is `agents.Runner.run_streamed`, installed via `install_fake_runner`. If you need finer control, ask whether the seam should expose more. |
 | "I see `loguru` warnings — let me silence them" | Leave them. They show what the engine is doing. |
 | "I don't need `isolated_trace_copy` — I'll just point at the fixture" | The index file gets written next to the trace. Pointing at `tests/fixtures/` pollutes the repo. Always use `isolated_trace_copy`. |
 
@@ -424,6 +425,7 @@ unprobed.
 - `example_compaction.py` — `AgentContext.compact_old_items` against
   varied histories: no-op under threshold, system never compacted,
   text-vs-tool eligibility split, render-label correctness for plain
-  vs tool-call assistants. Demonstrates a `_RecordingCompactor` class
-  (a real callable that records calls — not a mock) and direct
-  `AgentContext` probing without `run_with_fake` at all.
+  vs tool-call assistants. Demonstrates a duck-typed `_FakeAsyncOpenAI`
+  (a real object — not a mock) and post-state assertions against
+  `ctx.items[i].is_compacted` to drive direct `AgentContext` probing
+  without `run_with_fake` at all.

@@ -5,7 +5,6 @@ from pydantic import BaseModel, ConfigDict
 
 from engine.agents.prompt_templates import SYNTHESIS_SYSTEM_PROMPT
 from engine.model_config import ModelConfig
-from engine.model_provider_config import ModelProviderConfig
 from engine.tools.tool_protocol import ToolContext
 
 
@@ -41,12 +40,9 @@ class SynthesisTool:
     def __init__(
         self,
         model: ModelConfig,
-        model_provider: ModelProviderConfig,
-        client: AsyncOpenAI | None = None,
+        client: AsyncOpenAI,
     ) -> None:
-        """``client`` is injectable for tests; otherwise built from ``model_provider``."""
         self._model = model
-        self._model_provider = model_provider
         self._client = client
 
     async def run(
@@ -61,13 +57,6 @@ class SynthesisTool:
         for tid in arguments.trace_ids:
             rendered = store.render_trace(tid, budget=8_000)
             user_text_parts.append(rendered)
-
-        if self._client is None:
-            self._client = AsyncOpenAI(
-                base_url=self._model_provider.base_url,
-                api_key=self._model_provider.api_key,
-                default_headers=self._model_provider.default_headers,
-            )
 
         response = await self._client.chat.completions.create(
             model=self._model.name,

@@ -1,65 +1,33 @@
 from __future__ import annotations
 
-from collections.abc import Callable
-
 from openai import AsyncOpenAI, omit
 
-from engine.agents.agent_context import Compactor
 from engine.agents.agent_context_items import AgentContextItem
-from engine.agents.agent_execution import AgentExecution
 from engine.agents.prompt_templates import COMPACTION_SYSTEM_PROMPT
-from engine.engine_config import EngineConfig
-
-CompactorFactory = Callable[[AgentExecution], Compactor]
+from engine.model_config import ModelConfig
 
 
-def build_compactor_factory(
-    engine_config: EngineConfig,
-    client: AsyncOpenAI | None = None,
-) -> CompactorFactory:
-    """Returns a factory that produces a Compactor bound to an OpenAI-compatible client.
-
-    The factory takes an AgentExecution (currently unused but reserved for
-    future per-agent compaction policies) and returns a callable that the
-    AgentContext can invoke per item it wants compacted. When ``client`` is
-    not supplied, it is constructed from ``engine_config.model_provider`` so
-    compaction routes through whichever OpenAI-compatible endpoint the run is
-    configured for.
-    """
-    openai_client = client
-
-    def factory(_execution: AgentExecution) -> Compactor:
-        async def compact(item: AgentContextItem) -> str:
-            nonlocal openai_client
-            if openai_client is None:
-                openai_client = AsyncOpenAI(
-                    base_url=engine_config.model_provider.base_url,
-                    api_key=engine_config.model_provider.api_key,
-                    default_headers=engine_config.model_provider.default_headers,
-                )
-
-            user_text = _item_as_prompt(item)
-            # Frontier models (gpt-5.x, claude-opus-4-7+, …) reject
-            # ``temperature`` as deprecated; only forward it when
-            # explicitly set on the compaction model.
-            temperature = (
-                engine_config.compaction_model.temperature
-                if engine_config.compaction_model.temperature is not None
-                else omit
-            )
-            response = await openai_client.chat.completions.create(
-                model=engine_config.compaction_model.name,
-                messages=[
-                    {"role": "system", "content": COMPACTION_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_text},
-                ],
-                temperature=temperature,
-            )
-            return (response.choices[0].message.content or "").strip()
-
-        return compact
-
-    return factory
+async def compact(
+    *,
+    client: AsyncOpenAI,
+    compaction_model: ModelConfig,
+    item: AgentContextItem,
+) -> str:
+    """Summarize one ``AgentContextItem`` via ``client`` using ``compaction_model``."""
+    user_text = _item_as_prompt(item)
+    # Frontier models (gpt-5.x, claude-opus-4-7+, …) reject ``temperature``
+    # as deprecated; only forward it when explicitly set on the compaction
+    # model.
+    temperature = compaction_model.temperature if compaction_model.temperature is not None else omit
+    response = await client.chat.completions.create(
+        model=compaction_model.name,
+        messages=[
+            {"role": "system", "content": COMPACTION_SYSTEM_PROMPT},
+            {"role": "user", "content": user_text},
+        ],
+        temperature=temperature,
+    )
+    return (response.choices[0].message.content or "").strip()
 
 
 def _item_as_prompt(item: AgentContextItem) -> str:

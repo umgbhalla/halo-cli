@@ -1,11 +1,34 @@
 from __future__ import annotations
 
 import pytest
+from openai import AsyncOpenAI
 
+import engine.agents.agent_context as agent_context_module
 from engine.agents.agent_context import AgentContext
 from engine.agents.agent_context_items import AgentContextItem
 from engine.model_config import ModelConfig
 from engine.models.messages import AgentToolCall, AgentToolFunction
+
+
+def _install_recording_compact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[AgentContextItem]:
+    """Swap ``agent_context.compact`` for a recording stub. Returns the
+    list calls are appended to so tests can assert what was compacted."""
+    calls: list[AgentContextItem] = []
+
+    async def fake_compact(
+        *, client: AsyncOpenAI, compaction_model: ModelConfig, item: AgentContextItem
+    ) -> str:
+        del client, compaction_model
+        calls.append(item)
+        return f"SUMMARY({item.item_id})"
+
+    monkeypatch.setattr(agent_context_module, "compact", fake_compact)
+    return calls
+
+
+_DUMMY_CLIENT = AsyncOpenAI(api_key="test")
 
 
 def _ctx() -> AgentContext:
@@ -64,17 +87,10 @@ def test_to_messages_array_assistant_tool_call_item() -> None:
     assert msgs[1].role == "tool" and msgs[1].tool_call_id == "c1"
 
 
-class _StubCompactor:
-    def __init__(self) -> None:
-        self.calls: list[AgentContextItem] = []
-
-    async def compact(self, item: AgentContextItem) -> str:
-        self.calls.append(item)
-        return f"SUMMARY({item.item_id})"
-
-
 @pytest.mark.asyncio
-async def test_compact_old_items_only_touches_eligible_text() -> None:
+async def test_compact_old_items_only_touches_eligible_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     ctx = AgentContext(
         items=[],
         compaction_model=ModelConfig(name="claude-haiku-4-5"),
@@ -84,10 +100,10 @@ async def test_compact_old_items_only_touches_eligible_text() -> None:
     for i in range(4):
         ctx.append(AgentContextItem(item_id=f"t{i}", role="user", content=f"msg {i}"))
 
-    stub = _StubCompactor()
-    await ctx.compact_old_items(compactor=stub.compact)
+    calls = _install_recording_compact(monkeypatch)
+    await ctx.compact_old_items(_DUMMY_CLIENT)
 
-    ids_compacted = {call.item_id for call in stub.calls}
+    ids_compacted = {call.item_id for call in calls}
     assert ids_compacted == {"t0", "t1"}
     assert ctx.get_item("t0").is_compacted is True
     assert ctx.get_item("t0").compaction_summary == "SUMMARY(t0)"
@@ -95,7 +111,9 @@ async def test_compact_old_items_only_touches_eligible_text() -> None:
 
 
 @pytest.mark.asyncio
-async def test_compact_old_items_separate_thresholds_for_tools() -> None:
+async def test_compact_old_items_separate_thresholds_for_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     ctx = AgentContext(
         items=[],
         compaction_model=ModelConfig(name="claude-haiku-4-5"),
@@ -123,17 +141,19 @@ async def test_compact_old_items_separate_thresholds_for_tools() -> None:
             )
         )
 
-    stub = _StubCompactor()
-    await ctx.compact_old_items(compactor=stub.compact)
+    calls = _install_recording_compact(monkeypatch)
+    await ctx.compact_old_items(_DUMMY_CLIENT)
 
-    ids_compacted = {call.item_id for call in stub.calls}
+    ids_compacted = {call.item_id for call in calls}
     # 3 tool turns; keep_last_turns=1 → 2 oldest turns (4 items) compacted.
     # The third turn (a2 + r2) stays uncompacted as a unit.
     assert ids_compacted == {"a0", "r0", "a1", "r1"}
 
 
 @pytest.mark.asyncio
-async def test_compact_old_items_skips_system_and_already_compacted() -> None:
+async def test_compact_old_items_skips_system_and_already_compacted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     ctx = AgentContext(
         items=[],
         compaction_model=ModelConfig(name="claude-haiku-4-5"),
@@ -147,9 +167,9 @@ async def test_compact_old_items_skips_system_and_already_compacted() -> None:
         )
     )
     ctx.append(AgentContextItem(item_id="u2", role="user", content="hello"))
-    stub = _StubCompactor()
-    await ctx.compact_old_items(compactor=stub.compact)
-    compacted_ids = {c.item_id for c in stub.calls}
+    calls = _install_recording_compact(monkeypatch)
+    await ctx.compact_old_items(_DUMMY_CLIENT)
+    compacted_ids = {c.item_id for c in calls}
     assert compacted_ids == {"u2"}
     assert ctx.get_item("s").is_compacted is False
 

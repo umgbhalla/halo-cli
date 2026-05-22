@@ -14,6 +14,7 @@ from engine.main import run_engine_async
 from engine.models.engine_output import AgentOutputItem, AgentTextDelta
 from tests.probes.probe_kit import (
     FakeRunner,
+    install_fake_runner,
     isolated_trace_copy,
     make_assistant_text,
     make_default_config,
@@ -67,12 +68,12 @@ async def test_run_engine_async_filters_text_deltas() -> None:
         ],
     )
 
-    items = await run_engine_async(
-        make_default_messages(),
-        make_default_config(),
-        isolated_trace_copy(),
-        runner=runner,
-    )
+    with install_fake_runner(runner):
+        items = await run_engine_async(
+            make_default_messages(),
+            make_default_config(),
+            isolated_trace_copy(),
+        )
 
     assert len(items) == 1
     assert isinstance(items[0], AgentOutputItem)

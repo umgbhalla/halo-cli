@@ -40,7 +40,7 @@
 
 ## What is this?
 
-Note: If you're looking a hosted, plug-n-play version of HALO, please sign up for [inference.net](https://inference.net).
+Note: If you're looking for a hosted, plug-and-play version of HALO, please sign up for [inference.net](https://inference.net).
 
 HALO (Hierarchical Agent Loop Optimization) is a methodology for building recursively self-improving agent harnesses using [RLMs](https://github.com/alexzhang13/rlm). This repository contains:
 
@@ -51,11 +51,11 @@ HALO (Hierarchical Agent Loop Optimization) is a methodology for building recurs
 
 ## HALO Loop
 
-The core HALO loop is suprisingly simple:
+The core HALO loop is surprisingly simple:
 
 1. Collect execution traces from your agent harness. HALO uses OpenTelemetry-compatible tracing.
 2. Feed traces into HALO-RLM engine.
-3. The engine decomposes the traces to understand common failure modes and across harness executions and produces a report with it’s findings.
+3. The engine decomposes the traces to understand common failure modes across harness executions and produces a report with its findings.
 4. This report is fed into a coding agent like Cursor or Claude Code to generate and apply a set of changes to your harness.
 5. The harness is then re-deployed, more traces are gathered, and the cycle repeats.
 
@@ -65,7 +65,7 @@ HALO is great at finding issues in production agent deployments. We find high-tr
 
 A general-purpose harness like Claude Code is the wrong tool for trace analysis. This isn’t because the model isn’t smart, but because traces can get extremely long, and you need a specialized toolkit in order to make observations about systemic agentic behavior. We noticed in our testing that harnesses like CC would often overfit to an error present in a single/few traces rather than generalize to harness-level problems. This led us to creating a specialized form of a RLM.
 
-<img src="./assets//halo-rlm.png" alt="rlm"  style="border-radius:8px;" width="600">
+<img src="./assets/halo-rlm.png" alt="rlm"  style="border-radius:8px;" width="600">
 
 ## Get Started
 
@@ -129,7 +129,7 @@ We applied HALO to the [AppWorld](https://appworld.dev/) benchmark, a set of age
 
 The feedback from HALO Engine surfaced failures in the harnesses such as hallucinated tool calls, redundant arguments in tools, refusal loops, and semantic correctness issues. Each issue mapped cleanly to a direct prompt edit. HALO’s claims were independently verified from the source trace files with the findings holding up under scrutiny.
 
-<img src="./assets//halo-app-world-sgc.png" alt="app-world-sgc"  style="border-radius:8px;">
+<img src="./assets/halo-app-world-sgc.png" alt="app-world-sgc"  style="border-radius:8px;">
 <!-- 
   Note: Table cell styling is still limited in GitHub Markdown rendering,
   and border-radius is not supported, but background color and padding usually work.

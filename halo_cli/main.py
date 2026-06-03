@@ -78,23 +78,17 @@ def _make_config(
             reasoning_effort=reasoning_effort,
         )
 
-    # One ModelConfig per role so each is independently tunable. Compaction
-    # intentionally skips reasoning_effort — it's a deterministic summarizer.
-    # Synthesis / compaction fall back to the agent model (never a hardcoded
-    # name) so a plain --model run stays on one provider; --synthesis-model /
-    # --compaction-model point them at a cheaper model.
-    #
-    # --reasoning-effort targets the agents' model, so it is forwarded to
-    # synthesis only when synthesis runs on that same model. An overridden
-    # synthesis model resolves its own family default via
-    # ``effective_reasoning_effort`` instead — a cheap non-reasoning override
-    # must not receive an unsupported reasoning parameter.
+    # One ModelConfig per role so each is independently tunable. Synthesis
+    # and compaction intentionally skip reasoning_effort — both are plain
+    # summarizers, and --reasoning-effort targets the agents' model; their
+    # models resolve their own family default via
+    # ``effective_reasoning_effort`` instead. They fall back to the agent
+    # model (never a hardcoded name) so a plain --model run stays on one
+    # provider; --synthesis-model / --compaction-model point them at a
+    # cheaper model.
     root_model = make_model_config(model, reasoning_effort)
     subagent_model = make_model_config(model, reasoning_effort)
-    synthesis = make_model_config(
-        synthesis_model or model,
-        reasoning_effort if synthesis_model is None else None,
-    )
+    synthesis = make_model_config(synthesis_model or model, None)
     compaction = make_model_config(compaction_model or model, None)
 
     root_agent = AgentConfig(
@@ -220,8 +214,7 @@ def _run(
         "--reasoning-effort",
         help=(
             "Reasoning effort forwarded to the model on root and subagent "
-            "calls, and on synthesis calls unless --synthesis-model is set "
-            f"(compaction never uses reasoning). One of: "
+            f"calls (synthesis and compaction never use reasoning). One of: "
             f"{', '.join(REASONING_EFFORT_CHOICES)}. Omit to use the model "
             "family's documented max for known reasoning models, or the "
             "provider default for non-reasoning models."

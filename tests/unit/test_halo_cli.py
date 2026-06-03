@@ -57,26 +57,26 @@ def test_make_config_threads_cli_options_into_engine_config() -> None:
     assert cfg.model_provider.api_key == "sk-ant-test"
     assert cfg.model_provider.default_headers == {"anthropic-beta": "tools-2025-01-01"}
 
-    for model in (cfg.root_agent.model, cfg.subagent.model, cfg.synthesis_model):
+    for model in (cfg.root_agent.model, cfg.subagent.model):
         assert model.name == "claude-opus-4-7"
         assert model.temperature == 0.2
         assert model.maximum_output_tokens == 1024
         assert model.parallel_tool_calls is False
         assert model.reasoning_effort == "low"
 
-    assert cfg.compaction_model.name == "claude-opus-4-7"
-    assert cfg.compaction_model.temperature == 0.2
-    assert cfg.compaction_model.maximum_output_tokens == 1024
-    assert cfg.compaction_model.parallel_tool_calls is False
-    assert cfg.compaction_model.reasoning_effort is None
+    for model in (cfg.synthesis_model, cfg.compaction_model):
+        assert model.name == "claude-opus-4-7"
+        assert model.temperature == 0.2
+        assert model.maximum_output_tokens == 1024
+        assert model.parallel_tool_calls is False
+        assert model.reasoning_effort is None
 
 
 def test_make_config_overrides_synthesis_and_compaction_models() -> None:
-    """Overridden synthesis/compaction models never inherit the CLI
-    --reasoning-effort: it targets the agents' model, and a cheap
-    non-reasoning override must not receive an unsupported parameter.
-    ``effective_reasoning_effort`` resolves the override's own family
-    default at call time instead."""
+    """Synthesis/compaction never inherit the CLI --reasoning-effort: it
+    targets the agents' model, and a cheap non-reasoning override must
+    not receive an unsupported parameter. ``effective_reasoning_effort``
+    resolves each model's own family default at call time instead."""
     cfg = _make_config(
         model="claude-opus-4-7",
         synthesis_model="gpt-4.1-nano",

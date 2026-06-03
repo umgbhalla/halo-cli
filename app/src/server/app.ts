@@ -1,5 +1,5 @@
 import { trpcServer } from "@hono/trpc-server";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
 import type { DatabaseHandle } from "./db/client";
@@ -38,7 +38,7 @@ export function createServerApp(
     }),
   );
 
-  app.post("/v1/traces", async (c) => {
+  const ingestOtlpJson = async (c: Context) => {
     const contentType = (c.req.header("content-type") ?? "").toLowerCase();
     if (!contentType.includes("application/json")) {
       throw new HTTPException(415, {
@@ -60,7 +60,11 @@ export function createServerApp(
 
     c.status(200);
     return c.json({});
-  });
+  };
+
+  app.post("/v1/traces", ingestOtlpJson);
+  app.post("/v1/otel/v1/traces", ingestOtlpJson);
+  app.post("/otel/v1/traces", ingestOtlpJson);
 
   app.use(
     "/trpc/*",

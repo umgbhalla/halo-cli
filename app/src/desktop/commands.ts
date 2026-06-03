@@ -4,7 +4,7 @@ export const APP_DOCS_URL = "https://github.com/context-labs/halo";
 export const APP_RELEASE_URL = "https://inference.net/halo/releases";
 export const DEFAULT_INGEST_URL = "http://127.0.0.1:8799/v1/traces";
 
-export type WorkspaceRoute = "traces" | "sessions" | "analysis" | "settings";
+export type WorkspaceRoute = "traces" | "analysis" | "settings";
 
 export type DesktopCommandName =
   | "about"
@@ -238,7 +238,7 @@ export function routeForCommand(
     case "navigate-traces":
       return "traces";
     case "navigate-sessions":
-      return "sessions";
+      return "traces";
     case "navigate-analysis":
       return "analysis";
     case "navigate-settings":

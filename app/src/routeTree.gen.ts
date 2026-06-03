@@ -11,7 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as TracesRouteImport } from './routes/traces'
 import { Route as SettingsRouteImport } from './routes/settings'
-import { Route as SessionsRouteImport } from './routes/sessions'
+import { Route as ImportDataRouteImport } from './routes/import-data'
 import { Route as ComponentsRouteImport } from './routes/components'
 import { Route as AnalysisRouteImport } from './routes/analysis'
 import { Route as IndexRouteImport } from './routes/index'
@@ -31,9 +31,9 @@ const SettingsRoute = SettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
-const SessionsRoute = SessionsRouteImport.update({
-  id: '/sessions',
-  path: '/sessions',
+const ImportDataRoute = ImportDataRouteImport.update({
+  id: '/import-data',
+  path: '/import-data',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ComponentsRoute = ComponentsRouteImport.update({
@@ -81,7 +81,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/analysis': typeof AnalysisRoute
   '/components': typeof ComponentsRouteWithChildren
-  '/sessions': typeof SessionsRoute
+  '/import-data': typeof ImportDataRoute
   '/settings': typeof SettingsRoute
   '/traces': typeof TracesRoute
   '/components/custom': typeof ComponentsCustomRoute
@@ -94,7 +94,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/analysis': typeof AnalysisRoute
   '/components': typeof ComponentsRouteWithChildren
-  '/sessions': typeof SessionsRoute
+  '/import-data': typeof ImportDataRoute
   '/settings': typeof SettingsRoute
   '/traces': typeof TracesRoute
   '/components/custom': typeof ComponentsCustomRoute
@@ -108,7 +108,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/analysis': typeof AnalysisRoute
   '/components': typeof ComponentsRouteWithChildren
-  '/sessions': typeof SessionsRoute
+  '/import-data': typeof ImportDataRoute
   '/settings': typeof SettingsRoute
   '/traces': typeof TracesRoute
   '/components/custom': typeof ComponentsCustomRoute
@@ -123,7 +123,7 @@ export interface FileRouteTypes {
     | '/'
     | '/analysis'
     | '/components'
-    | '/sessions'
+    | '/import-data'
     | '/settings'
     | '/traces'
     | '/components/custom'
@@ -136,7 +136,7 @@ export interface FileRouteTypes {
     | '/'
     | '/analysis'
     | '/components'
-    | '/sessions'
+    | '/import-data'
     | '/settings'
     | '/traces'
     | '/components/custom'
@@ -149,7 +149,7 @@ export interface FileRouteTypes {
     | '/'
     | '/analysis'
     | '/components'
-    | '/sessions'
+    | '/import-data'
     | '/settings'
     | '/traces'
     | '/components/custom'
@@ -163,7 +163,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AnalysisRoute: typeof AnalysisRoute
   ComponentsRoute: typeof ComponentsRouteWithChildren
-  SessionsRoute: typeof SessionsRoute
+  ImportDataRoute: typeof ImportDataRoute
   SettingsRoute: typeof SettingsRoute
   TracesRoute: typeof TracesRoute
 }
@@ -184,11 +184,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/sessions': {
-      id: '/sessions'
-      path: '/sessions'
-      fullPath: '/sessions'
-      preLoaderRoute: typeof SessionsRouteImport
+    '/import-data': {
+      id: '/import-data'
+      path: '/import-data'
+      fullPath: '/import-data'
+      preLoaderRoute: typeof ImportDataRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/components': {
@@ -274,7 +274,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AnalysisRoute: AnalysisRoute,
   ComponentsRoute: ComponentsRouteWithChildren,
-  SessionsRoute: SessionsRoute,
+  ImportDataRoute: ImportDataRoute,
   SettingsRoute: SettingsRoute,
   TracesRoute: TracesRoute,
 }

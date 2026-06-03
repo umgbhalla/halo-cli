@@ -10,26 +10,21 @@ import {
 import { Link } from "@tanstack/react-router";
 import {
   Activity,
-  AlertCircle,
   Boxes,
   Braces,
   CalendarClock,
-  CheckCircle2,
   ChevronRight,
   CircleDollarSign,
   Clipboard,
   Code2,
-  Copy,
   DownloadCloud,
   Filter,
   Layers3,
   ListTree,
   Loader2,
   MessageSquare,
-  RefreshCcw,
   Search,
   Server,
-  Terminal,
   Trash2,
   XCircle,
   Zap,
@@ -60,7 +55,9 @@ import {
   TRACE_PAGE_COMMAND_EVENT,
   showDesktopRowContextMenu,
 } from "~/desktop/desktopBridge";
+import { ImportDataScreen, LocalAgentSetupDialog } from "./ImportDataScreen";
 import { LangfuseImportDialog } from "./LangfuseImportDialog";
+import { TraceTitleBar, type LiveStatus } from "./TraceTitleBar";
 import type {
   FacetOption,
   SessionSortKey,
@@ -84,30 +81,39 @@ import {
 } from "./spanTree";
 
 const DEFAULT_INGEST_URL = "http://127.0.0.1:8799/v1/traces";
-const CATALYST_ENV_LINE =
-  "CATALYST_OTLP_ENDPOINT=http://127.0.0.1:8799/v1/traces";
 const EMPTY_SPANS: Span[] = [];
 
 type DateRange = "1h" | "24h" | "7d" | "all";
 type DetailTab = "tree" | "timeline" | "span" | "raw";
-type LiveStatus = "connecting" | "live" | "reconnecting" | "offline";
 type StatusFilter = "all" | "ok" | "error";
 type ScopeFilter = "all" | "root" | "entrypoint";
 type SourceFilter = "all" | "local" | "langfuse";
+export type TraceMonitorViewMode = "traces" | "sessions";
 
 export function TraceMonitorPage({
   followLatest,
   onFollowLatestChange,
   onSelectLatestTrace,
+  onSelectSession,
   onSelectTrace,
+  onOpenImportData,
+  onViewModeChange,
+  selectedSessionId,
   selectedTraceId,
+  viewMode,
 }: {
   followLatest: boolean;
   onFollowLatestChange: (enabled: boolean) => void;
   onSelectLatestTrace: (traceId: string) => void;
+  onSelectSession: (sessionId: string | null) => void;
   onSelectTrace: (traceId: string | null) => void;
+  onOpenImportData: () => void;
+  onViewModeChange: (viewMode: TraceMonitorViewMode) => void;
+  selectedSessionId?: string;
   selectedTraceId?: string;
+  viewMode: TraceMonitorViewMode;
 }) {
+  const isTracesMode = viewMode === "traces";
   const [searchText, setSearchText] = useState("");
   const [dateRange, setDateRange] = useState<DateRange>("24h");
   const [status, setStatus] = useState<StatusFilter>("all");
@@ -116,17 +122,25 @@ export function TraceMonitorPage({
   const [agentName, setAgentName] = useState("all");
   const [modelName, setModelName] = useState("all");
   const [source, setSource] = useState<SourceFilter>("all");
-  const [sortBy, setSortBy] = useState<TraceSortKey>("start_time");
+  const [traceSortBy, setTraceSortBy] = useState<TraceSortKey>("start_time");
+  const [sessionSortBy, setSessionSortBy] =
+    useState<SessionSortKey>("last_activity");
   const [clearDialogOpen, setClearDialogOpen] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [localAgentSetupOpen, setLocalAgentSetupOpen] = useState(false);
   const [liveStatus, setLiveStatus] = useState<LiveStatus>("connecting");
   const [recentTraceIds, setRecentTraceIds] = useState<Set<string>>(() => new Set());
+  const [recentSessionIds, setRecentSessionIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const recentTraceTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const recentSessionTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const workspaceInvalidateTimer = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
   const followLatestRef = useRef(followLatest);
   const selectedTraceIdRef = useRef<string | undefined>(selectedTraceId);
+  const viewModeRef = useRef(viewMode);
   const utils = trpc.useUtils();
 
   const clearDataMutation = trpc.telemetry.clearData.useMutation({
@@ -139,9 +153,11 @@ export function TraceMonitorPage({
     async onSuccess(result) {
       setClearDialogOpen(false);
       setRecentTraceIds(new Set());
+      setRecentSessionIds(new Set());
       setSearchText("");
       onFollowLatestChange(false);
       onSelectTrace(null);
+      onSelectSession(null);
       await Promise.all([
         utils.telemetry.info.invalidate(),
         utils.traces.facets.invalidate(),
@@ -168,7 +184,8 @@ export function TraceMonitorPage({
   useEffect(() => {
     followLatestRef.current = followLatest;
     selectedTraceIdRef.current = selectedTraceId;
-  }, [followLatest, selectedTraceId]);
+    viewModeRef.current = viewMode;
+  }, [followLatest, selectedTraceId, viewMode]);
 
   const markRecentTraceIds = useCallback((traceIds: string[]) => {
     if (traceIds.length === 0) return;
@@ -191,401 +208,6 @@ export function TraceMonitorPage({
       recentTraceTimers.current.set(traceId, timer);
     }
   }, []);
-
-  const invalidateWorkspace = useCallback(() => {
-    if (workspaceInvalidateTimer.current) return;
-    workspaceInvalidateTimer.current = setTimeout(() => {
-      workspaceInvalidateTimer.current = null;
-      void utils.telemetry.info.invalidate();
-      void utils.traces.facets.invalidate();
-      void utils.traces.list.invalidate();
-      void utils.traces.search.invalidate();
-      void utils.sessions.facets.invalidate();
-      void utils.sessions.list.invalidate();
-      void utils.sessions.search.invalidate();
-    }, 80);
-  }, [utils]);
-
-  trpc.live.workspace.useSubscription(undefined, {
-    onComplete() {
-      setLiveStatus("offline");
-    },
-    onData(eventEnvelope) {
-      const event = eventEnvelope.data;
-      setLiveStatus("live");
-      markRecentTraceIds(traceIdsForLiveEvent(event));
-      const latestTraceId = nextFollowLatestTraceId({
-        currentTraceId: selectedTraceIdRef.current,
-        event,
-        followLatest: followLatestRef.current,
-      });
-      if (latestTraceId) {
-        selectedTraceIdRef.current = latestTraceId;
-        onSelectLatestTrace(latestTraceId);
-      }
-      if (event.payload.type === "trace.upserted") {
-        utils.traces.get.setData(
-          { traceId: event.payload.trace.traceId },
-          event.payload.trace,
-        );
-      }
-      invalidateWorkspace();
-    },
-    onError() {
-      setLiveStatus("reconnecting");
-    },
-    onStarted() {
-      setLiveStatus("live");
-    },
-  });
-
-  useEffect(
-    () => () => {
-      if (workspaceInvalidateTimer.current) {
-        clearTimeout(workspaceInvalidateTimer.current);
-      }
-      for (const timer of recentTraceTimers.current.values()) {
-        clearTimeout(timer);
-      }
-    },
-    [],
-  );
-
-  const activeSearch = useDeferredValue(searchText.trim());
-  const filters = useMemo(() => {
-    const startDate = startDateForRange(dateRange);
-    return {
-      agents: agentName === "all" ? undefined : [agentName],
-      llmModelNames: modelName === "all" ? undefined : [modelName],
-      scope: scope === "all" ? undefined : scope,
-      serviceNames: serviceName === "all" ? undefined : [serviceName],
-      sources: source === "all" ? undefined : [source],
-      startDate,
-      status: status === "all" ? undefined : status,
-    };
-  }, [agentName, dateRange, modelName, scope, serviceName, source, status]);
-
-  const infoQuery = trpc.telemetry.info.useQuery();
-  const facetsQuery = trpc.traces.facets.useQuery(
-    {
-      facetIds: [
-        "agent_name",
-        "llm_model_name",
-        "observation_kind",
-        "service_name",
-        "source",
-        "status",
-      ],
-    },
-    {},
-  );
-  const listQuery = trpc.traces.list.useQuery(
-    {
-      filters,
-      limit: 75,
-      sortBy,
-      sortOrder: "desc",
-    },
-    {
-      enabled: activeSearch.length === 0,
-    },
-  );
-  const searchQuery = trpc.traces.search.useQuery(
-    {
-      filters,
-      limit: 75,
-      query: activeSearch,
-    },
-    {
-      enabled: activeSearch.length > 0,
-    },
-  );
-
-  const traces = useMemo(
-    () =>
-      activeSearch
-        ? (searchQuery.data?.results.map((result) => result.trace) ?? [])
-        : (listQuery.data?.traces ?? []),
-    [activeSearch, listQuery.data?.traces, searchQuery.data?.results],
-  );
-  const totalCount = activeSearch
-    ? (searchQuery.data?.totalCount ?? 0)
-    : (listQuery.data?.totalCount ?? 0);
-  const isLoading =
-    infoQuery.isLoading ||
-    (activeSearch ? searchQuery.isLoading : listQuery.isLoading);
-  const isRefreshing =
-    infoQuery.isFetching ||
-    facetsQuery.isFetching ||
-    listQuery.isFetching ||
-    searchQuery.isFetching;
-
-  const visibleMetrics = useMemo(() => summarizeVisibleTraces(traces), [traces]);
-  const ingestUrl = infoQuery.data?.ingestUrl ?? DEFAULT_INGEST_URL;
-
-  const copyIngestUrl = useCallback(async () => {
-    await navigator.clipboard.writeText(ingestUrl);
-    toast.success({
-      title: "Ingest URL copied",
-      description: "Paste it into your local agent telemetry config.",
-    });
-  }, [ingestUrl]);
-
-  const refresh = useCallback(() => {
-    void infoQuery.refetch();
-    void facetsQuery.refetch();
-    void (activeSearch ? searchQuery.refetch() : listQuery.refetch());
-  }, [activeSearch, facetsQuery, infoQuery, listQuery, searchQuery]);
-
-  useEffect(() => {
-    const onPageCommand = (
-      event: WindowEventMap[typeof TRACE_PAGE_COMMAND_EVENT],
-    ) => {
-      switch (event.detail.type) {
-        case "copy-ingest-url":
-          void copyIngestUrl();
-          break;
-        case "open-clear-data":
-          setClearDialogOpen(true);
-          break;
-        case "open-import":
-          setImportDialogOpen(true);
-          break;
-        case "refresh":
-          refresh();
-          break;
-        case "toggle-follow-latest":
-          onFollowLatestChange(!followLatestRef.current);
-          break;
-        default:
-          break;
-      }
-    };
-
-    window.addEventListener(TRACE_PAGE_COMMAND_EVENT, onPageCommand);
-    return () =>
-      window.removeEventListener(TRACE_PAGE_COMMAND_EVENT, onPageCommand);
-  }, [copyIngestUrl, onFollowLatestChange, refresh]);
-
-  return (
-    <main className="min-h-screen bg-background text-foreground">
-      <TraceTitleBar
-        icon="traces"
-        health={infoQuery.data?.lastBatch?.status ?? "waiting"}
-        isRefreshing={isRefreshing}
-        liveStatus={liveStatus}
-        liveUrl={infoQuery.data?.liveUrl ?? "ws://127.0.0.1:8800"}
-        title="Trace Monitor"
-        followLatest={followLatest}
-        onFollowLatestChange={onFollowLatestChange}
-        onCopy={copyIngestUrl}
-        onClearData={() => setClearDialogOpen(true)}
-        onImport={() => setImportDialogOpen(true)}
-        onRefresh={refresh}
-      />
-
-      <div className="grid min-h-[calc(100vh-3.5rem)] grid-cols-[112px_300px_minmax(0,1fr)] pt-14">
-        <WorkspaceNav active="traces" />
-        <FilterSidebar
-          agentName={agentName}
-          dateRange={dateRange}
-          description="Narrow local traces by runtime, model, and time."
-          facets={facetsQuery.data?.categorical ?? {}}
-          modelName={modelName}
-          onAgentNameChange={setAgentName}
-          onDateRangeChange={setDateRange}
-          onModelNameChange={setModelName}
-          onReset={() => {
-            setDateRange("24h");
-            setStatus("all");
-            setScope("all");
-            setServiceName("all");
-            setAgentName("all");
-            setModelName("all");
-            setSource("all");
-          }}
-          onScopeChange={setScope}
-          onServiceNameChange={setServiceName}
-          onStatusChange={setStatus}
-          scope={scope}
-          serviceName={serviceName}
-          source={source}
-          status={status}
-          onSourceChange={setSource}
-        />
-
-        <section className="min-w-0 overflow-hidden">
-          <div className="flex h-full min-h-[calc(100vh-3.5rem)] flex-col">
-            <MetricsStrip
-              errorCount={visibleMetrics.errorCount}
-              isLoading={isLoading}
-              llmSpanCount={visibleMetrics.llmSpanCount}
-              spanCount={visibleMetrics.spanCount}
-              totalCost={visibleMetrics.totalCost}
-              totalTokens={visibleMetrics.totalTokens}
-              traceCount={totalCount}
-            />
-
-            <div className="border-b border-subtle px-6 py-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <h1 className="text-2xl tracking-normal">
-                    Local agent traces
-                  </h1>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {infoQuery.data?.lastBatch
-                      ? `Last ingest ${relativeTime(infoQuery.data.lastBatch.receivedAt)} with ${infoQuery.data.lastBatch.acceptedSpanCount} spans`
-                      : "Waiting for your first OTLP trace batch"}
-                  </p>
-                </div>
-                <div className="flex min-w-0 items-center gap-2">
-                  <Input
-                    aria-label="Search traces"
-                    className="h-9"
-                    containerClassname="w-72"
-                    icon={<Search className="h-4 w-4 text-muted-foreground" />}
-                    onChange={(event) => setSearchText(event.currentTarget.value)}
-                    placeholder="Search trace IDs, models, inputs..."
-                    value={searchText}
-                  />
-                  <select
-                    aria-label="Sort traces"
-                    className="h-9 rounded-md border border-subtle bg-background px-3 text-sm"
-                    onChange={(event) =>
-                      setSortBy(event.currentTarget.value as TraceSortKey)
-                    }
-                    value={sortBy}
-                  >
-                    <option value="start_time">Newest</option>
-                    <option value="duration">Duration</option>
-                    <option value="span_count">Span count</option>
-                    <option value="llm_span_count">LLM spans</option>
-                    <option value="total_tokens">Tokens</option>
-                    <option value="total_cost">Cost</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            {infoQuery.data?.spanCount === 0 ? (
-              <EmptyTraceState ingestUrl={ingestUrl} onCopy={copyIngestUrl} />
-            ) : (
-              <TraceList
-                activeTraceId={selectedTraceId}
-                isLoading={isLoading}
-                onSelectTrace={onSelectTrace}
-                recentTraceIds={recentTraceIds}
-                totalCount={totalCount}
-                traces={traces}
-              />
-            )}
-          </div>
-        </section>
-      </div>
-
-      <TelemetryDetailSheet
-        followLatest={followLatest}
-        mode="trace"
-        onOpenChange={(open) => {
-          if (!open) onSelectTrace(null);
-        }}
-        open={followLatest || Boolean(selectedTraceId)}
-        traceId={selectedTraceId}
-      />
-      <LangfuseImportDialog
-        onImported={refresh}
-        onOpenChange={setImportDialogOpen}
-        open={importDialogOpen}
-      />
-      <Dialog
-        cancelTitle="Cancel"
-        className="sm:!max-w-[520px] md:!w-[520px]"
-        confirmButtonVariant="destructive"
-        confirmTitle="Clear data"
-        dialogDescription="This removes local traces, spans, search rows, ingest batches, and live telemetry history. Saved Langfuse connections stay intact."
-        dialogTitle="Clear local telemetry data?"
-        disabled={clearDataMutation.isPending}
-        loading={clearDataMutation.isPending}
-        onConfirm={() => clearDataMutation.mutate()}
-        onOpenChange={setClearDialogOpen}
-        open={clearDialogOpen}
-      >
-        <div className="rounded-md border border-destructive-border bg-destructive/5 p-4 text-sm">
-          <div className="flex items-start gap-3">
-            <Trash2 className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
-            <div className="space-y-1">
-              <p className="font-medium text-foreground">
-                This cannot be undone.
-              </p>
-              <p className="text-muted-foreground">
-                Current local database contains {infoQuery.data?.traceCount ?? 0}{" "}
-                traces and {infoQuery.data?.spanCount ?? 0} spans.
-              </p>
-            </div>
-          </div>
-        </div>
-      </Dialog>
-    </main>
-  );
-}
-
-export function SessionsPage({
-  onSelectSession,
-  selectedSessionId,
-}: {
-  onSelectSession: (sessionId: string | null) => void;
-  selectedSessionId?: string;
-}) {
-  const [searchText, setSearchText] = useState("");
-  const [dateRange, setDateRange] = useState<DateRange>("24h");
-  const [status, setStatus] = useState<StatusFilter>("all");
-  const [scope, setScope] = useState<ScopeFilter>("all");
-  const [serviceName, setServiceName] = useState("all");
-  const [agentName, setAgentName] = useState("all");
-  const [modelName, setModelName] = useState("all");
-  const [source, setSource] = useState<SourceFilter>("all");
-  const [sortBy, setSortBy] = useState<SessionSortKey>("last_activity");
-  const [clearDialogOpen, setClearDialogOpen] = useState(false);
-  const [importDialogOpen, setImportDialogOpen] = useState(false);
-  const [liveStatus, setLiveStatus] = useState<LiveStatus>("connecting");
-  const [recentSessionIds, setRecentSessionIds] = useState<Set<string>>(
-    () => new Set(),
-  );
-  const recentSessionTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
-  const workspaceInvalidateTimer = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
-  const utils = trpc.useUtils();
-
-  const clearDataMutation = trpc.telemetry.clearData.useMutation({
-    onError(error) {
-      toast.error({
-        title: "Could not clear telemetry data",
-        description: error.message,
-      });
-    },
-    async onSuccess(result) {
-      setClearDialogOpen(false);
-      setRecentSessionIds(new Set());
-      setSearchText("");
-      onSelectSession(null);
-      await Promise.all([
-        utils.telemetry.info.invalidate(),
-        utils.sessions.facets.invalidate(),
-        utils.sessions.list.invalidate(),
-        utils.sessions.search.invalidate(),
-        utils.sessions.get.invalidate(),
-        utils.sessions.getSpans.invalidate(),
-        utils.sessions.getTraces.invalidate(),
-        utils.traces.facets.invalidate(),
-        utils.traces.list.invalidate(),
-      ]);
-      toast.success({
-        title: "Telemetry data cleared",
-        description: `${result.traceCount} traces and ${result.spanCount} spans removed.`,
-      });
-    },
-  });
 
   const markRecentSessionId = useCallback((sessionId: string | null | undefined) => {
     if (!sessionId) return;
@@ -612,6 +234,9 @@ export function SessionsPage({
     workspaceInvalidateTimer.current = setTimeout(() => {
       workspaceInvalidateTimer.current = null;
       void utils.telemetry.info.invalidate();
+      void utils.traces.facets.invalidate();
+      void utils.traces.list.invalidate();
+      void utils.traces.search.invalidate();
       void utils.sessions.facets.invalidate();
       void utils.sessions.list.invalidate();
       void utils.sessions.search.invalidate();
@@ -625,11 +250,29 @@ export function SessionsPage({
     onData(eventEnvelope) {
       const event = eventEnvelope.data;
       setLiveStatus("live");
+      markRecentTraceIds(traceIdsForLiveEvent(event));
       if (event.payload.type === "trace.upserted") {
         markRecentSessionId(event.payload.trace.sessionId);
       }
       if (event.payload.type === "span.upserted") {
         markRecentSessionId(event.payload.span.sessionId);
+      }
+      if (viewModeRef.current === "traces") {
+        const latestTraceId = nextFollowLatestTraceId({
+          currentTraceId: selectedTraceIdRef.current,
+          event,
+          followLatest: followLatestRef.current,
+        });
+        if (latestTraceId) {
+          selectedTraceIdRef.current = latestTraceId;
+          onSelectLatestTrace(latestTraceId);
+        }
+      }
+      if (event.payload.type === "trace.upserted") {
+        utils.traces.get.setData(
+          { traceId: event.payload.trace.traceId },
+          event.payload.trace,
+        );
       }
       invalidateWorkspace();
     },
@@ -645,6 +288,9 @@ export function SessionsPage({
     () => () => {
       if (workspaceInvalidateTimer.current) {
         clearTimeout(workspaceInvalidateTimer.current);
+      }
+      for (const timer of recentTraceTimers.current.values()) {
+        clearTimeout(timer);
       }
       for (const timer of recentSessionTimers.current.values()) {
         clearTimeout(timer);
@@ -668,67 +314,174 @@ export function SessionsPage({
   }, [agentName, dateRange, modelName, scope, serviceName, source, status]);
 
   const infoQuery = trpc.telemetry.info.useQuery();
-  const facetsQuery = trpc.sessions.facets.useQuery({
-    facetIds: [
-      "agent_name",
-      "llm_model_name",
-      "observation_kind",
-      "service_name",
-      "source",
-      "status",
-    ],
-  });
-  const listQuery = trpc.sessions.list.useQuery(
+  const traceFacetsQuery = trpc.traces.facets.useQuery(
+    {
+      facetIds: [
+        "agent_name",
+        "llm_model_name",
+        "observation_kind",
+        "service_name",
+        "source",
+        "status",
+      ],
+    },
+    { enabled: isTracesMode },
+  );
+  const traceListQuery = trpc.traces.list.useQuery(
     {
       filters,
       limit: 75,
-      sortBy,
+      sortBy: traceSortBy,
       sortOrder: "desc",
     },
-    { enabled: activeSearch.length === 0 },
+    {
+      enabled: isTracesMode && activeSearch.length === 0,
+    },
   );
-  const searchQuery = trpc.sessions.search.useQuery(
+  const traceSearchQuery = trpc.traces.search.useQuery(
     {
       filters,
       limit: 75,
       query: activeSearch,
     },
-    { enabled: activeSearch.length > 0 },
+    {
+      enabled: isTracesMode && activeSearch.length > 0,
+    },
+  );
+  const sessionFacetsQuery = trpc.sessions.facets.useQuery(
+    {
+      facetIds: [
+        "agent_name",
+        "llm_model_name",
+        "observation_kind",
+        "service_name",
+        "source",
+        "status",
+      ],
+    },
+    { enabled: !isTracesMode },
+  );
+  const sessionListQuery = trpc.sessions.list.useQuery(
+    {
+      filters,
+      limit: 75,
+      sortBy: sessionSortBy,
+      sortOrder: "desc",
+    },
+    { enabled: !isTracesMode && activeSearch.length === 0 },
+  );
+  const sessionSearchQuery = trpc.sessions.search.useQuery(
+    {
+      filters,
+      limit: 75,
+      query: activeSearch,
+    },
+    { enabled: !isTracesMode && activeSearch.length > 0 },
+  );
+
+  const traces = useMemo(
+    () =>
+      activeSearch
+        ? (traceSearchQuery.data?.results.map((result) => result.trace) ?? [])
+        : (traceListQuery.data?.traces ?? []),
+    [activeSearch, traceListQuery.data?.traces, traceSearchQuery.data?.results],
   );
   const sessions = useMemo(
     () =>
       activeSearch
-        ? (searchQuery.data?.results.map((result) => result.session) ?? [])
-        : (listQuery.data?.sessions ?? []),
-    [activeSearch, listQuery.data?.sessions, searchQuery.data?.results],
+        ? (sessionSearchQuery.data?.results.map((result) => result.session) ?? [])
+        : (sessionListQuery.data?.sessions ?? []),
+    [activeSearch, sessionListQuery.data?.sessions, sessionSearchQuery.data?.results],
   );
-  const totalCount = activeSearch
-    ? (searchQuery.data?.totalCount ?? 0)
-    : (listQuery.data?.totalCount ?? 0);
-  const isLoading =
+  const traceTotalCount = activeSearch
+    ? (traceSearchQuery.data?.totalCount ?? 0)
+    : (traceListQuery.data?.totalCount ?? 0);
+  const sessionTotalCount = activeSearch
+    ? (sessionSearchQuery.data?.totalCount ?? 0)
+    : (sessionListQuery.data?.totalCount ?? 0);
+  const traceLoading =
     infoQuery.isLoading ||
-    (activeSearch ? searchQuery.isLoading : listQuery.isLoading);
+    (activeSearch ? traceSearchQuery.isLoading : traceListQuery.isLoading);
+  const sessionLoading =
+    infoQuery.isLoading ||
+    (activeSearch ? sessionSearchQuery.isLoading : sessionListQuery.isLoading);
+  const isLoading = isTracesMode ? traceLoading : sessionLoading;
   const isRefreshing =
     infoQuery.isFetching ||
-    facetsQuery.isFetching ||
-    listQuery.isFetching ||
-    searchQuery.isFetching;
-  const visibleMetrics = useMemo(() => summarizeVisibleSessions(sessions), [sessions]);
+    (isTracesMode
+      ? traceFacetsQuery.isFetching ||
+        traceListQuery.isFetching ||
+        traceSearchQuery.isFetching
+      : sessionFacetsQuery.isFetching ||
+        sessionListQuery.isFetching ||
+        sessionSearchQuery.isFetching);
+
+  const traceMetrics = useMemo(() => summarizeVisibleTraces(traces), [traces]);
+  const sessionMetrics = useMemo(
+    () => summarizeVisibleSessions(sessions),
+    [sessions],
+  );
+  const activeFacets = isTracesMode
+    ? traceFacetsQuery.data?.categorical
+    : sessionFacetsQuery.data?.categorical;
   const ingestUrl = infoQuery.data?.ingestUrl ?? DEFAULT_INGEST_URL;
+  const catalystEnvLine = `CATALYST_OTLP_ENDPOINT=${ingestUrl}`;
+  const isTelemetryEmpty =
+    Boolean(infoQuery.data) &&
+    infoQuery.data?.traceCount === 0 &&
+    infoQuery.data?.spanCount === 0;
+  const latestVisibleTraceId = useMemo(
+    () =>
+      traces.reduce<Trace | undefined>(
+        (latest, trace) =>
+          !latest || trace.startTimeMs > latest.startTimeMs ? trace : latest,
+        undefined,
+      )?.traceId,
+    [traces],
+  );
 
-  const copyIngestUrl = useCallback(async () => {
-    await navigator.clipboard.writeText(ingestUrl);
+  const copyText = async (
+    value: string,
+    title: string,
+    description: string,
+  ) => {
+    await navigator.clipboard.writeText(value);
     toast.success({
-      title: "Ingest URL copied",
-      description: "Paste it into your local agent telemetry config.",
+      title,
+      description,
     });
-  }, [ingestUrl]);
+  };
 
-  const refresh = useCallback(() => {
+  const copyIngestUrl = () =>
+    copyText(
+      ingestUrl,
+      "Ingest URL copied",
+      "Paste it into your local agent telemetry config.",
+    );
+
+  const refresh = () => {
     void infoQuery.refetch();
-    void facetsQuery.refetch();
-    void (activeSearch ? searchQuery.refetch() : listQuery.refetch());
-  }, [activeSearch, facetsQuery, infoQuery, listQuery, searchQuery]);
+    if (isTracesMode) {
+      void traceFacetsQuery.refetch();
+      void (activeSearch ? traceSearchQuery.refetch() : traceListQuery.refetch());
+      return;
+    }
+    void sessionFacetsQuery.refetch();
+    void (activeSearch ? sessionSearchQuery.refetch() : sessionListQuery.refetch());
+  };
+
+  const handleFollowLatestChange = (enabled: boolean) => {
+    if (!enabled) {
+      onFollowLatestChange(false);
+      return;
+    }
+    if (latestVisibleTraceId) {
+      selectedTraceIdRef.current = latestVisibleTraceId;
+      onSelectLatestTrace(latestVisibleTraceId);
+      return;
+    }
+    onFollowLatestChange(true);
+  };
 
   useEffect(() => {
     const onPageCommand = (
@@ -742,144 +495,233 @@ export function SessionsPage({
           setClearDialogOpen(true);
           break;
         case "open-import":
-          setImportDialogOpen(true);
+          onOpenImportData();
           break;
         case "refresh":
           refresh();
           break;
-        default:
+        case "toggle-follow-latest":
+          if (isTracesMode) {
+            handleFollowLatestChange(!followLatestRef.current);
+          }
           break;
       }
     };
 
     window.addEventListener(TRACE_PAGE_COMMAND_EVENT, onPageCommand);
-    return () =>
+    return () => {
       window.removeEventListener(TRACE_PAGE_COMMAND_EVENT, onPageCommand);
-  }, [copyIngestUrl, refresh]);
+    };
+  }, [copyIngestUrl, handleFollowLatestChange, isTracesMode, onOpenImportData, refresh]);
 
   return (
     <main className="min-h-screen bg-background text-foreground">
       <TraceTitleBar
         health={infoQuery.data?.lastBatch?.status ?? "waiting"}
-        icon="sessions"
         isRefreshing={isRefreshing}
         liveStatus={liveStatus}
         liveUrl={infoQuery.data?.liveUrl ?? "ws://127.0.0.1:8800"}
-        onClearData={() => setClearDialogOpen(true)}
+        title="Trace Monitor"
+        followLatest={isTracesMode ? followLatest : false}
+        onFollowLatestChange={
+          isTracesMode ? handleFollowLatestChange : undefined
+        }
         onCopy={copyIngestUrl}
-        onImport={() => setImportDialogOpen(true)}
+        onClearData={() => setClearDialogOpen(true)}
+        onImport={onOpenImportData}
         onRefresh={refresh}
-        title="Sessions"
       />
 
-      <div className="grid min-h-[calc(100vh-3.5rem)] grid-cols-[112px_300px_minmax(0,1fr)] pt-14">
-        <WorkspaceNav active="sessions" />
-        <FilterSidebar
-          agentName={agentName}
-          dateRange={dateRange}
-          description="Narrow local sessions by runtime, model, and time."
-          facets={facetsQuery.data?.categorical ?? {}}
-          modelName={modelName}
-          onAgentNameChange={setAgentName}
-          onDateRangeChange={setDateRange}
-          onModelNameChange={setModelName}
-          onReset={() => {
-            setDateRange("24h");
-            setStatus("all");
-            setScope("all");
-            setServiceName("all");
-            setAgentName("all");
-            setModelName("all");
-            setSource("all");
-          }}
-          onScopeChange={setScope}
-          onServiceNameChange={setServiceName}
-          onSourceChange={setSource}
-          onStatusChange={setStatus}
-          scope={scope}
-          serviceName={serviceName}
-          source={source}
-          status={status}
-        />
+      <div
+        className={cn(
+          "grid min-h-[calc(100vh-3.5rem)] pt-14",
+          isTelemetryEmpty
+            ? "grid-cols-[14rem_minmax(0,1fr)]"
+            : "grid-cols-[14rem_300px_minmax(0,1fr)]",
+        )}
+      >
+        <WorkspaceNav active="traces" />
+        {isTelemetryEmpty ? null : (
+          <FilterSidebar
+            agentName={agentName}
+            dateRange={dateRange}
+            description="Switch views, then narrow local telemetry by runtime, model, and time."
+            facets={activeFacets ?? {}}
+            modelName={modelName}
+            onAgentNameChange={setAgentName}
+            onDateRangeChange={setDateRange}
+            onModelNameChange={setModelName}
+            onReset={() => {
+              setDateRange("24h");
+              setStatus("all");
+              setScope("all");
+              setServiceName("all");
+              setAgentName("all");
+              setModelName("all");
+              setSource("all");
+            }}
+            onScopeChange={setScope}
+            onServiceNameChange={setServiceName}
+            onStatusChange={setStatus}
+            onViewModeChange={onViewModeChange}
+            scope={scope}
+            serviceName={serviceName}
+            source={source}
+            status={status}
+            onSourceChange={setSource}
+            viewMode={viewMode}
+          />
+        )}
 
         <section className="min-w-0 overflow-hidden">
-          <div className="flex h-full min-h-[calc(100vh-3.5rem)] flex-col">
-            <SessionMetricsStrip
-              errorCount={visibleMetrics.errorCount}
-              isLoading={isLoading}
-              llmSpanCount={visibleMetrics.llmSpanCount}
-              sessionCount={totalCount}
-              spanCount={visibleMetrics.spanCount}
-              totalCost={visibleMetrics.totalCost}
-              totalTokens={visibleMetrics.totalTokens}
-              traceCount={visibleMetrics.traceCount}
+          {isTelemetryEmpty ? (
+            <ImportDataScreen
+              onConnectLocalAgent={() => setLocalAgentSetupOpen(true)}
+              onImportLangfuse={() => setImportDialogOpen(true)}
             />
+          ) : (
+            <div className="flex h-full min-h-[calc(100vh-3.5rem)] flex-col">
+              {isTracesMode ? (
+                <MetricsStrip
+                  errorCount={traceMetrics.errorCount}
+                  isLoading={isLoading}
+                  llmSpanCount={traceMetrics.llmSpanCount}
+                  spanCount={traceMetrics.spanCount}
+                  totalCost={traceMetrics.totalCost}
+                  totalTokens={traceMetrics.totalTokens}
+                  traceCount={traceTotalCount}
+                />
+              ) : (
+                <SessionMetricsStrip
+                  errorCount={sessionMetrics.errorCount}
+                  isLoading={isLoading}
+                  llmSpanCount={sessionMetrics.llmSpanCount}
+                  sessionCount={sessionTotalCount}
+                  spanCount={sessionMetrics.spanCount}
+                  totalCost={sessionMetrics.totalCost}
+                  totalTokens={sessionMetrics.totalTokens}
+                  traceCount={sessionMetrics.traceCount}
+                />
+              )}
 
-            <div className="border-b border-subtle px-6 py-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <h1 className="text-2xl tracking-normal">
-                    Local agent sessions
-                  </h1>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Conversations grouped by session ID across all turns.
-                  </p>
-                </div>
-                <div className="flex min-w-0 items-center gap-2">
-                  <Input
-                    aria-label="Search sessions"
-                    className="h-9"
-                    containerClassname="w-72"
-                    icon={<Search className="h-4 w-4 text-muted-foreground" />}
-                    onChange={(event) => setSearchText(event.currentTarget.value)}
-                    placeholder="Search sessions, services, models..."
-                    value={searchText}
-                  />
-                  <select
-                    aria-label="Sort sessions"
-                    className="h-9 rounded-md border border-subtle bg-background px-3 text-sm"
-                    onChange={(event) =>
-                      setSortBy(event.currentTarget.value as SessionSortKey)
-                    }
-                    value={sortBy}
-                  >
-                    <option value="last_activity">Latest activity</option>
-                    <option value="start_time">First activity</option>
-                    <option value="duration">Duration</option>
-                    <option value="trace_count">Turns</option>
-                    <option value="span_count">Spans</option>
-                    <option value="llm_span_count">LLM spans</option>
-                    <option value="total_tokens">Tokens</option>
-                    <option value="total_cost">Cost</option>
-                  </select>
+              <div className="border-b border-subtle px-6 py-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <h1 className="text-2xl tracking-normal">
+                      {isTracesMode ? "Local agent traces" : "Local agent sessions"}
+                    </h1>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {isTracesMode
+                        ? infoQuery.data?.lastBatch
+                          ? `Last ingest ${relativeTime(infoQuery.data.lastBatch.receivedAt)} with ${infoQuery.data.lastBatch.acceptedSpanCount} spans`
+                          : "Waiting for your first OTLP trace batch"
+                        : "Conversations grouped by session ID across all turns."}
+                    </p>
+                  </div>
+                  <div className="flex min-w-0 items-center gap-2">
+                    <Input
+                      aria-label={isTracesMode ? "Search traces" : "Search sessions"}
+                      className="h-9"
+                      containerClassname="w-72"
+                      icon={<Search className="h-4 w-4 text-muted-foreground" />}
+                      onChange={(event) => setSearchText(event.currentTarget.value)}
+                      placeholder={
+                        isTracesMode
+                          ? "Search trace IDs, models, inputs..."
+                          : "Search sessions, services, models..."
+                      }
+                      value={searchText}
+                    />
+                    {isTracesMode ? (
+                      <select
+                        aria-label="Sort traces"
+                        className="h-9 rounded-md border border-subtle bg-background px-3 text-sm"
+                        onChange={(event) =>
+                          setTraceSortBy(event.currentTarget.value as TraceSortKey)
+                        }
+                        value={traceSortBy}
+                      >
+                        <option value="start_time">Newest</option>
+                        <option value="duration">Duration</option>
+                        <option value="span_count">Span count</option>
+                        <option value="llm_span_count">LLM spans</option>
+                        <option value="total_tokens">Tokens</option>
+                        <option value="total_cost">Cost</option>
+                      </select>
+                    ) : (
+                      <select
+                        aria-label="Sort sessions"
+                        className="h-9 rounded-md border border-subtle bg-background px-3 text-sm"
+                        onChange={(event) =>
+                          setSessionSortBy(event.currentTarget.value as SessionSortKey)
+                        }
+                        value={sessionSortBy}
+                      >
+                        <option value="last_activity">Latest activity</option>
+                        <option value="start_time">First activity</option>
+                        <option value="duration">Duration</option>
+                        <option value="trace_count">Turns</option>
+                        <option value="span_count">Spans</option>
+                        <option value="llm_span_count">LLM spans</option>
+                        <option value="total_tokens">Tokens</option>
+                        <option value="total_cost">Cost</option>
+                      </select>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
 
-            <SessionList
-              activeSessionId={selectedSessionId}
-              isLoading={isLoading}
-              onSelectSession={onSelectSession}
-              recentSessionIds={recentSessionIds}
-              sessions={sessions}
-              totalCount={totalCount}
-            />
-          </div>
+              {isTracesMode ? (
+                <TraceList
+                  activeTraceId={selectedTraceId}
+                  isLoading={isLoading}
+                  onSelectTrace={onSelectTrace}
+                  recentTraceIds={recentTraceIds}
+                  totalCount={traceTotalCount}
+                  traces={traces}
+                />
+              ) : (
+                <SessionList
+                  activeSessionId={selectedSessionId}
+                  isLoading={isLoading}
+                  onSelectSession={onSelectSession}
+                  recentSessionIds={recentSessionIds}
+                  sessions={sessions}
+                  totalCount={sessionTotalCount}
+                />
+              )}
+            </div>
+          )}
         </section>
       </div>
 
+      <TelemetryDetailSheet
+        followLatest={isTracesMode ? followLatest : false}
+        mode="trace"
+        onOpenChange={(open) => {
+          if (!open) onSelectTrace(null);
+        }}
+        open={isTracesMode && (followLatest || Boolean(selectedTraceId))}
+        traceId={selectedTraceId}
+      />
       <TelemetryDetailSheet
         mode="session"
         onOpenChange={(open) => {
           if (!open) onSelectSession(null);
         }}
-        open={Boolean(selectedSessionId)}
+        open={!isTracesMode && Boolean(selectedSessionId)}
         sessionId={selectedSessionId}
       />
       <LangfuseImportDialog
         onImported={refresh}
         onOpenChange={setImportDialogOpen}
         open={importDialogOpen}
+      />
+      <LocalAgentSetupDialog
+        envLine={catalystEnvLine}
+        ingestUrl={ingestUrl}
+        onOpenChange={setLocalAgentSetupOpen}
+        open={localAgentSetupOpen}
       />
       <Dialog
         cancelTitle="Cancel"
@@ -913,184 +755,6 @@ export function SessionsPage({
   );
 }
 
-function TraceTitleBar({
-  followLatest,
-  health,
-  icon,
-  isRefreshing,
-  liveStatus,
-  liveUrl,
-  onClearData,
-  onCopy,
-  onFollowLatestChange,
-  onImport,
-  onRefresh,
-  title,
-}: {
-  followLatest?: boolean;
-  health: string;
-  icon: "traces" | "sessions";
-  isRefreshing: boolean;
-  liveStatus: LiveStatus;
-  liveUrl: string;
-  onClearData: () => void;
-  onCopy: () => void;
-  onFollowLatestChange?: (enabled: boolean) => void;
-  onImport: () => void;
-  onRefresh: () => void;
-  title: string;
-}) {
-  const Icon = icon === "sessions" ? MessageSquare : Activity;
-  return (
-    <div className="electrobun-webkit-app-region-drag fixed inset-x-0 top-0 z-40 grid h-14 select-none grid-cols-[112px_minmax(0,1fr)] border-b border-subtle bg-background/95 backdrop-blur">
-      <div className="border-r border-subtle" />
-      <div className="flex min-w-0 items-center justify-between gap-4 px-4">
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-subtle bg-card">
-            <Icon className="h-4 w-4 text-detail-brand" />
-          </div>
-          <div className="min-w-0">
-            <p className="text-xs font-medium text-muted-foreground">
-              HALO
-            </p>
-            <p className="truncate text-sm font-semibold">{title}</p>
-          </div>
-        </div>
-
-        <div className="electrobun-webkit-app-region-no-drag flex min-w-0 items-center gap-2">
-          <ToolbarStatus health={health} liveStatus={liveStatus} liveUrl={liveUrl} />
-          {onFollowLatestChange ? (
-            <Button
-              aria-label={
-                followLatest ? "Stop following latest trace" : "Follow latest trace"
-              }
-              aria-pressed={followLatest}
-              className={cn(
-                "gap-2",
-                followLatest && "border-detail-brand/50 text-detail-brand",
-              )}
-              onClick={() => onFollowLatestChange(!followLatest)}
-              size="sm"
-              variant={followLatest ? "secondary" : "outline"}
-            >
-              <Activity
-                className={cn("h-4 w-4", followLatest && "animate-pulse")}
-              />
-              {followLatest ? "Following latest" : "Follow latest"}
-            </Button>
-          ) : null}
-          <Button
-            aria-label="Import Langfuse data"
-            onClick={onImport}
-            size="sm"
-            variant="secondary"
-          >
-            <DownloadCloud className="mr-2 h-4 w-4" />
-            Import Data
-          </Button>
-          <Button
-            aria-label="Clear local telemetry data"
-            className="border-destructive-border text-destructive hover:bg-destructive/10"
-            onClick={onClearData}
-            size="sm"
-            variant="outline"
-          >
-            <Trash2 className="mr-2 h-4 w-4" />
-            Clear Data
-          </Button>
-          <Button
-            aria-label="Copy ingest URL"
-            onClick={onCopy}
-            size="sm"
-            variant="outline"
-          >
-            <Copy className="mr-2 h-4 w-4" />
-            Copy URL
-          </Button>
-          <Button
-            aria-label="Refresh traces"
-            onClick={onRefresh}
-            size="icon"
-            variant="ghost"
-          >
-            <RefreshCcw
-              className={cn("h-4 w-4", isRefreshing && "animate-spin")}
-            />
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ToolbarStatus({
-  health,
-  liveStatus,
-  liveUrl,
-}: {
-  health: string;
-  liveStatus: LiveStatus;
-  liveUrl: string;
-}) {
-  const live = liveStatus === "live";
-  const reconnecting = liveStatus === "reconnecting" || liveStatus === "connecting";
-  const accepted = health === "accepted";
-  const waiting = health === "waiting";
-  const healthLabel = accepted
-    ? "receiving telemetry"
-    : waiting
-      ? "waiting for telemetry"
-      : health.replaceAll("_", " ");
-  const liveLabel = live
-    ? "live updates connected"
-    : reconnecting
-      ? "live updates connecting"
-      : "live updates offline";
-  const label = live
-    ? accepted
-      ? "Live ingest"
-      : waiting
-        ? "Live · waiting"
-        : `Live · ${healthLabel}`
-    : reconnecting
-      ? "Connecting"
-      : accepted
-        ? "Ingest OK"
-        : "Offline";
-  const variant =
-    live && accepted
-      ? "status-success"
-      : live || reconnecting
-        ? "status-brand"
-        : accepted
-          ? "status-success"
-          : "outline";
-  return (
-    <Badge
-      className="gap-2"
-      title={`Realtime: ${liveLabel}. Ingest: ${healthLabel}. Socket: ${liveUrl}`}
-      variant={variant}
-    >
-      <span
-        aria-hidden
-        className={cn(
-          "h-1.5 w-1.5 rounded-full",
-          live ? "bg-detail-brand" : "bg-muted-foreground",
-          reconnecting && "animate-pulse",
-        )}
-      />
-      {accepted ? (
-        <CheckCircle2 className="h-3 w-3 shrink-0" />
-      ) : waiting || reconnecting ? (
-        <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
-      ) : (
-        <AlertCircle className="h-3 w-3 shrink-0" />
-      )}
-      <span>{label}</span>
-    </Badge>
-  );
-}
-
 function FilterSidebar({
   agentName,
   dateRange,
@@ -1105,10 +769,12 @@ function FilterSidebar({
   onServiceNameChange,
   onSourceChange,
   onStatusChange,
+  onViewModeChange,
   scope,
   serviceName,
   source,
   status,
+  viewMode,
 }: {
   agentName: string;
   dateRange: DateRange;
@@ -1123,10 +789,12 @@ function FilterSidebar({
   onServiceNameChange: (value: string) => void;
   onSourceChange: (value: SourceFilter) => void;
   onStatusChange: (value: StatusFilter) => void;
+  onViewModeChange?: (value: TraceMonitorViewMode) => void;
   scope: ScopeFilter;
   serviceName: string;
   source: SourceFilter;
   status: StatusFilter;
+  viewMode?: TraceMonitorViewMode;
 }) {
   return (
     <aside className="border-r border-subtle bg-sidebar">
@@ -1142,6 +810,39 @@ function FilterSidebar({
         </div>
 
         <div className="space-y-4">
+          {viewMode && onViewModeChange ? (
+            <div className="space-y-2">
+              <span className="flex items-center gap-2 text-xs font-semibold uppercase text-muted-foreground">
+                <ListTree className="h-4 w-4" />
+                View
+              </span>
+              <Tabs
+                onValueChange={(value) => {
+                  if (value === "traces" || value === "sessions") {
+                    onViewModeChange(value);
+                  }
+                }}
+                value={viewMode}
+              >
+                <TabsList className="grid w-full grid-cols-2 gap-1 rounded-md border border-subtle bg-background-muted p-1 sm:grid sm:w-full">
+                  <TabsTrigger
+                    className="w-full gap-1.5 px-2 py-1.5 text-xs"
+                    value="traces"
+                  >
+                    <Activity className="h-3.5 w-3.5" />
+                    Traces
+                  </TabsTrigger>
+                  <TabsTrigger
+                    className="w-full gap-1.5 px-2 py-1.5 text-xs"
+                    value="sessions"
+                  >
+                    <MessageSquare className="h-3.5 w-3.5" />
+                    Sessions
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
+            </div>
+          ) : null}
           <FilterSelect
             icon={<CalendarClock className="h-4 w-4" />}
             label="Window"
@@ -1348,41 +1049,6 @@ function MetricTile({
   );
 }
 
-function EmptyTraceState({
-  ingestUrl,
-  onCopy,
-}: {
-  ingestUrl: string;
-  onCopy: () => void;
-}) {
-  return (
-    <div className="grid flex-1 place-items-center p-8">
-      <div className="w-full max-w-2xl border border-dashed border-subtle bg-background-muted p-8 text-center">
-        <div className="mx-auto grid h-12 w-12 place-items-center rounded-md border border-subtle bg-background">
-          <Terminal className="h-5 w-5 text-detail-brand" />
-        </div>
-        <h2 className="mt-5 text-xl font-semibold">No local traces yet</h2>
-        <p className="mx-auto mt-2 max-w-lg text-sm text-muted-foreground">
-          Point a local Catalyst or OpenTelemetry JSON exporter at this desktop
-          app and emitted spans will appear here live.
-        </p>
-        <div className="mt-5 flex items-center justify-center gap-2">
-          <code className="min-w-0 rounded-md border border-subtle bg-background px-3 py-2 font-mono text-sm">
-            {CATALYST_ENV_LINE}
-          </code>
-          <Button onClick={onCopy} variant="secondary">
-            <Copy className="mr-2 h-4 w-4" />
-            Copy
-          </Button>
-        </div>
-        <p className="mt-3 font-mono text-xs text-muted-foreground">
-          {ingestUrl}
-        </p>
-      </div>
-    </div>
-  );
-}
-
 function TraceList({
   activeTraceId,
   isLoading,
@@ -1439,6 +1105,7 @@ function TraceList({
               recentTraceIds.has(trace.traceId) && "live-trace-flash",
             )}
             key={trace.traceId}
+            onClick={() => onSelectTrace(trace.traceId)}
             onContextMenu={(event) => {
               event.preventDefault();
               void showDesktopRowContextMenu({
@@ -1447,7 +1114,6 @@ function TraceList({
                 sourceUrl: trace.sourceUrl,
               });
             }}
-            onClick={() => onSelectTrace(trace.traceId)}
             type="button"
           >
             <div className="min-w-0">
@@ -1556,6 +1222,7 @@ function SessionList({
               recentSessionIds.has(session.sessionId) && "live-trace-flash",
             )}
             key={session.sessionId}
+            onClick={() => onSelectSession(session.sessionId)}
             onContextMenu={(event) => {
               event.preventDefault();
               void showDesktopRowContextMenu({
@@ -1563,7 +1230,6 @@ function SessionList({
                 kind: "session",
               });
             }}
-            onClick={() => onSelectSession(session.sessionId)}
             type="button"
           >
             <div className="min-w-0">

@@ -64,7 +64,7 @@ const desktopRpc = BrowserView.defineRPC<HaloDesktopRPCSchema>({
               value:
                 input.kind === "trace"
                   ? `#/traces?traceId=${encodeURIComponent(input.id)}`
-                  : `#/sessions?sessionId=${encodeURIComponent(input.id)}`,
+                  : `#/traces?view=sessions&sessionId=${encodeURIComponent(input.id)}`,
             },
           },
           ...(input.sourceUrl

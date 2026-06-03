@@ -123,7 +123,8 @@ bun scripts/fire-test-spans.ts --endpoint http://127.0.0.1:8799/v1/traces
 
 ## Langfuse Import
 
-Click **Import Data** in the top bar to import historical Langfuse traces.
+Click **Import Data** in the top bar, then choose **Import from Langfuse** to
+import historical Langfuse traces.
 
 You need:
 
@@ -232,8 +233,8 @@ HALO_DB_PATH=/tmp/halo-canvas.sqlite bun run dev
 ## Routes
 
 - `/` redirects to the trace monitor.
-- `/traces` shows trace list and trace details.
-- `/sessions` shows conversations grouped by `session.id`.
+- `/traces` shows trace and session lists, with `view=sessions` selecting conversations grouped by `session.id`.
+- `/import-data` shows the import/setup hub for Langfuse imports and local agent connection details.
 - `/analysis` shows local HALO analysis runs.
 - `/settings` configures the HALO engine and model providers.
 - `/components` shows the local UI component gallery.
@@ -242,7 +243,8 @@ The desktop app normally uses hash-style routing under ElectroBun, so direct bro
 
 ```text
 http://127.0.0.1:5173/#/traces
-http://127.0.0.1:5173/#/sessions
+http://127.0.0.1:5173/#/traces?view=sessions
+http://127.0.0.1:5173/#/import-data
 http://127.0.0.1:5173/#/analysis
 http://127.0.0.1:5173/#/settings
 ```

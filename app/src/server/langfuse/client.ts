@@ -1,6 +1,8 @@
 import type {
   LangfuseDiscovery,
   LangfuseFacetValue,
+  LangfuseObservationLegacyListResponse,
+  LangfuseObservationListResponse,
   LangfuseTraceFilters,
   LangfuseTraceListItem,
   LangfuseTraceWithDetails,
@@ -57,6 +59,7 @@ export class LangfuseApiClient {
 
   async listTraces(
     input: {
+      fields?: string;
       filters?: LangfuseTraceFilters;
       limit?: number;
       page?: number;
@@ -68,11 +71,48 @@ export class LangfuseApiClient {
     return this.fetchJson<TraceListResponse>(url, { signal });
   }
 
-  async getTrace(traceId: string, signal?: AbortSignal) {
+  async getTrace(
+    traceId: string,
+    signal?: AbortSignal,
+    input: { fields?: string } = {},
+  ) {
+    const params = new URLSearchParams();
+    if (input.fields) params.set("fields", input.fields);
+    const suffix = params.size > 0 ? `?${params.toString()}` : "";
     return this.fetchJson<LangfuseTraceWithDetails>(
-      `/api/public/traces/${encodeURIComponent(traceId)}`,
+      `/api/public/traces/${encodeURIComponent(traceId)}${suffix}`,
       { signal },
     );
+  }
+
+  async listObservationsV2(
+    input: {
+      cursor?: string | null;
+      expandMetadata?: string[];
+      fields?: string;
+      fromStartTime?: string;
+      limit?: number;
+      toStartTime?: string;
+      traceIds: string[];
+    },
+    signal?: AbortSignal,
+  ) {
+    const url = buildObservationListPath(input);
+    return this.fetchJson<LangfuseObservationListResponse>(url, { signal });
+  }
+
+  async listObservations(
+    input: {
+      fromStartTime?: string;
+      limit?: number;
+      page?: number;
+      toStartTime?: string;
+      traceId?: string;
+    } = {},
+    signal?: AbortSignal,
+  ) {
+    const url = buildLegacyObservationListPath(input);
+    return this.fetchJson<LangfuseObservationLegacyListResponse>(url, { signal });
   }
 
   private async fetchJson<T>(
@@ -174,6 +214,7 @@ export function basicAuthHeader(publicKey: string, secretKey: string): string {
 }
 
 export function buildTraceListPath(input: {
+  fields?: string;
   filters?: LangfuseTraceFilters;
   limit?: number;
   page?: number;
@@ -183,6 +224,7 @@ export function buildTraceListPath(input: {
   params.set("page", String(input.page ?? 1));
   params.set("limit", String(input.limit ?? 50));
   params.set("orderBy", input.orderBy ?? "timestamp.asc");
+  if (input.fields) params.set("fields", input.fields);
 
   const filters = compactFilters(input.filters);
   if (filters.fromTimestamp) params.set("fromTimestamp", filters.fromTimestamp);
@@ -196,6 +238,63 @@ export function buildTraceListPath(input: {
   if (filters.release) params.set("release", filters.release);
 
   return `/api/public/traces?${params.toString()}`;
+}
+
+export function buildObservationListPath(input: {
+  cursor?: string | null;
+  expandMetadata?: string[];
+  fields?: string;
+  fromStartTime?: string;
+  limit?: number;
+  toStartTime?: string;
+  traceIds: string[];
+}) {
+  const traceIds = input.traceIds.map((id) => id.trim()).filter(Boolean);
+  if (traceIds.length === 0) {
+    throw new LangfuseApiError("At least one trace ID is required.");
+  }
+
+  const params = new URLSearchParams();
+  params.set("limit", String(input.limit ?? 1000));
+  params.set(
+    "fields",
+    input.fields ??
+      "core,basic,time,io,metadata,model,usage,prompt,metrics,trace_context",
+  );
+  if (input.fromStartTime) params.set("fromStartTime", input.fromStartTime);
+  if (input.toStartTime) params.set("toStartTime", input.toStartTime);
+  params.set(
+    "filter",
+    JSON.stringify([
+      {
+        column: "traceId",
+        operator: "any of",
+        type: "stringOptions",
+        value: traceIds,
+      },
+    ]),
+  );
+  if (input.cursor) params.set("cursor", input.cursor);
+  if (input.expandMetadata?.length) {
+    params.set("expandMetadata", input.expandMetadata.join(","));
+  }
+  return `/api/public/v2/observations?${params.toString()}`;
+}
+
+export function buildLegacyObservationListPath(input: {
+  fromStartTime?: string;
+  limit?: number;
+  page?: number;
+  toStartTime?: string;
+  traceId?: string;
+} = {}) {
+  const params = new URLSearchParams();
+  params.set("page", String(input.page ?? 1));
+  params.set("limit", String(input.limit ?? 100));
+  if (input.fromStartTime) params.set("fromStartTime", input.fromStartTime);
+  if (input.toStartTime) params.set("toStartTime", input.toStartTime);
+  if (input.traceId) params.set("traceId", input.traceId);
+  return `/api/public/observations?${params.toString()}`;
 }
 
 export function compactFilters(

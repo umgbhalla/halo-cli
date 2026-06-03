@@ -1,38 +1,32 @@
 import { Link } from "@tanstack/react-router";
-import { Activity, BrainCircuit, MessageSquare, Settings } from "lucide-react";
+import { Activity, BrainCircuit, Settings } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { cn } from "~/lib/ui";
 
-export type WorkspaceSection = "traces" | "sessions" | "analysis" | "settings";
+export type WorkspaceSection = "traces" | "analysis" | "settings";
 
 const navItems: Array<{
   id: WorkspaceSection;
   icon: ReactNode;
   label: string;
-  to: "/traces" | "/sessions" | "/analysis" | "/settings";
+  to: "/traces" | "/analysis" | "/settings";
 }> = [
   {
     id: "traces",
-    icon: <Activity className="h-4 w-4" />,
+    icon: <Activity className="h-4 w-4" strokeWidth={1.5} />,
     label: "Traces",
     to: "/traces",
   },
   {
-    id: "sessions",
-    icon: <MessageSquare className="h-4 w-4" />,
-    label: "Sessions",
-    to: "/sessions",
-  },
-  {
     id: "analysis",
-    icon: <BrainCircuit className="h-4 w-4" />,
+    icon: <BrainCircuit className="h-4 w-4" strokeWidth={1.5} />,
     label: "Analysis",
     to: "/analysis",
   },
   {
     id: "settings",
-    icon: <Settings className="h-4 w-4" />,
+    icon: <Settings className="h-4 w-4" strokeWidth={1.5} />,
     label: "Settings",
     to: "/settings",
   },
@@ -40,17 +34,19 @@ const navItems: Array<{
 
 export function WorkspaceNav({ active }: { active: WorkspaceSection }) {
   return (
-    <aside className="border-r border-subtle bg-background">
-      <nav className="flex h-full flex-col gap-2 p-3">
-        {navItems.map((item) => (
-          <WorkspaceNavLink
-            active={active === item.id}
-            icon={item.icon}
-            key={item.id}
-            label={item.label}
-            to={item.to}
-          />
-        ))}
+    <aside className="border-r border-border/50 bg-sidebar">
+      <nav className="relative flex h-full overflow-y-auto py-2">
+        <ul className="w-full">
+          {navItems.map((item) => (
+            <WorkspaceNavLink
+              active={active === item.id}
+              icon={item.icon}
+              key={item.id}
+              label={item.label}
+              to={item.to}
+            />
+          ))}
+        </ul>
       </nav>
     </aside>
   );
@@ -65,19 +61,21 @@ function WorkspaceNavLink({
   active: boolean;
   icon: ReactNode;
   label: string;
-  to: "/traces" | "/sessions" | "/analysis" | "/settings";
+  to: "/traces" | "/analysis" | "/settings";
 }) {
   return (
-    <Link
-      className={cn(
-        "electrobun-webkit-app-region-no-drag flex min-h-16 flex-col items-center justify-center gap-1 rounded-md border border-transparent px-2 py-3 text-xs font-medium text-muted-foreground transition hover:border-subtle hover:bg-muted hover:text-foreground",
-        active && "border-detail-brand/30 bg-detail-brand/10 text-detail-brand",
-      )}
-      search={{} as never}
-      to={to}
-    >
-      {icon}
-      {label}
-    </Link>
+    <li className="px-3 py-px">
+      <Link
+        className={cn(
+          "electrobun-webkit-app-region-no-drag flex h-9 items-center gap-3 rounded-md px-3 text-sm font-medium text-foreground hover:bg-accent hover:text-foreground",
+          active && "bg-accent text-foreground",
+        )}
+        search={{} as never}
+        to={to}
+      >
+        <span className="shrink-0">{icon}</span>
+        <span className="truncate">{label}</span>
+      </Link>
+    </li>
   );
 }

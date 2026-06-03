@@ -104,16 +104,27 @@ export function DesktopCommandCenter() {
 
   const navigateTo = useCallback(
     (command: DesktopCommandName) => {
+      if (command === "navigate-sessions") {
+        void navigate({
+          to: "/traces",
+          search: { view: "sessions" },
+        } as unknown as NavigateOptions);
+        return;
+      }
+
       const route = routeForCommand(command);
       if (!route) return;
-      void navigate({ to: routePath(route) } as NavigateOptions);
+      void navigate({
+        to: routePath(route),
+        search: {},
+      } as unknown as NavigateOptions);
     },
     [navigate],
   );
 
   const dispatchTraceCommand = useCallback(
     (command: TracePageCommand) => {
-      if (path === "/traces" || path === "/sessions") {
+      if (path === "/" || path === "/traces") {
         dispatchTracePageCommand(command);
         return;
       }
@@ -178,7 +189,7 @@ export function DesktopCommandCenter() {
           await copyIngestUrl();
           break;
         case "import-data":
-          dispatchTraceCommand({ type: "open-import" });
+          void navigate({ to: "/import-data" } as NavigateOptions);
           break;
         case "navigate-analysis":
         case "navigate-sessions":
@@ -206,7 +217,7 @@ export function DesktopCommandCenter() {
           break;
         }
         case "refresh":
-          if (path === "/traces" || path === "/sessions") {
+          if (path === "/" || path === "/traces") {
             dispatchTraceCommand({ type: "refresh" });
           } else {
             void queryClient.invalidateQueries();
@@ -223,15 +234,15 @@ export function DesktopCommandCenter() {
           break;
         }
         case "toggle-follow-latest": {
-          if (path === "/traces") {
+          if (path === "/traces" && search.view !== "sessions") {
             dispatchTraceCommand({ type: "toggle-follow-latest" });
           } else {
             void navigate({
               to: "/traces",
               search: {
                 followLatest: 1,
-                traceId:
-                  typeof search.traceId === "string" ? search.traceId : undefined,
+                traceId: undefined,
+                view: undefined,
               },
             } as unknown as NavigateOptions);
           }

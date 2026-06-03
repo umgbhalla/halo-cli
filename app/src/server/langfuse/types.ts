@@ -18,6 +18,23 @@ export type LangfuseTraceFilters = {
   release?: string;
 };
 
+export type LangfuseObservationListResponse = {
+  data: LangfuseObservation[];
+  meta: {
+    cursor?: string | null;
+  };
+};
+
+export type LangfuseObservationLegacyListResponse = {
+  data?: LangfuseObservation[];
+  meta?: {
+    limit?: number;
+    page?: number;
+    totalItems?: number;
+    totalPages?: number;
+  };
+};
+
 export type LangfuseFacetValue = {
   label: string;
   value: string;

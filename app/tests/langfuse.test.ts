@@ -2,6 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import {
   basicAuthHeader,
+  buildLegacyObservationListPath,
+  buildObservationListPath,
   buildTraceListPath,
   discoverLangfuse,
   normalizeLangfuseBaseUrl,
@@ -52,6 +54,45 @@ describe("Langfuse API helpers", () => {
     expect(path).toContain("environment=production");
     expect(path).toContain("tags=agent");
     expect(path).toContain("name=agent.run");
+  });
+
+  test("builds v2 observation query filters for batched trace import", () => {
+    const path = buildObservationListPath({
+      fromStartTime: "2026-05-01T00:00:00.000Z",
+      limit: 1000,
+      toStartTime: "2026-05-31T00:00:00.000Z",
+      traceIds: ["trace-a", "trace-b"],
+    });
+    const url = new URL(path, "http://langfuse.test");
+    const filter = JSON.parse(url.searchParams.get("filter") ?? "[]");
+
+    expect(url.pathname).toBe("/api/public/v2/observations");
+    expect(url.searchParams.get("fromStartTime")).toBe(
+      "2026-05-01T00:00:00.000Z",
+    );
+    expect(url.searchParams.get("limit")).toBe("1000");
+    expect(url.searchParams.get("fields")).toContain("trace_context");
+    expect(filter).toEqual([
+      {
+        column: "traceId",
+        operator: "any of",
+        type: "stringOptions",
+        value: ["trace-a", "trace-b"],
+      },
+    ]);
+  });
+
+  test("builds legacy observation pagination queries", () => {
+    const path = buildLegacyObservationListPath({
+      fromStartTime: "2026-05-01T00:00:00.000Z",
+      limit: 100,
+      page: 3,
+      toStartTime: "2026-05-31T00:00:00.000Z",
+    });
+    expect(path).toContain("/api/public/observations?");
+    expect(path).toContain("page=3");
+    expect(path).toContain("limit=100");
+    expect(path).toContain("fromStartTime=2026-05-01T00%3A00%3A00.000Z");
   });
 });
 
@@ -134,7 +175,7 @@ describe("Langfuse mapping", () => {
 });
 
 describe("Langfuse import queue", () => {
-  test("imports paginated Langfuse traces through bunqueue into SQLite", async () => {
+  test("imports Langfuse traces with batched v2 observations", async () => {
     const langfuse = startFakeLangfuse();
     const database = createDatabase(":memory:");
     ensureSchema(database.sqlite);
@@ -163,6 +204,8 @@ describe("Langfuse import queue", () => {
 
       expect(completed.importedTraces).toBe(1);
       expect(completed.importedObservations).toBe(3);
+      expect(langfuse.state.observationListCalls).toBe(1);
+      expect(langfuse.state.traceDetailCalls).toBe(0);
       const trace = getTrace(database.sqlite, makeLangfuseTrace().id);
       expect(trace?.rootSpanName).toBe("agent.run");
       expect(trace?.serviceName).toBe("gator-agent");
@@ -189,9 +232,278 @@ describe("Langfuse import queue", () => {
       database.sqlite.close(false);
     }
   });
+
+  test("falls back to legacy observations when v2 observations are unavailable", async () => {
+    const langfuse = startFakeLangfuse({ observationsV2Status: 404 });
+    const database = createDatabase(":memory:");
+    ensureSchema(database.sqlite);
+    const live = createLiveEventStore(database.sqlite);
+    const service = createLangfuseImportService({ database, live });
+
+    try {
+      const discovery = await discoverLangfuse({
+        baseUrl: langfuse.baseUrl,
+        publicKey: PUBLIC_KEY,
+        secretKey: SECRET_KEY,
+      });
+      const connection = saveLangfuseConnection(database.sqlite, {
+        baseUrl: discovery.baseUrl,
+        discovery,
+        name: "Fake Langfuse",
+        publicKey: PUBLIC_KEY,
+        secretKey: SECRET_KEY,
+      });
+
+      const job = await service.start({
+        connectionId: connection.id,
+        filters: { fromTimestamp: "2026-05-01T00:00:00.000Z" },
+      });
+      const completed = await waitForImportJob(database.sqlite, job.id, "completed");
+
+      expect(completed.importedTraces).toBe(1);
+      expect(completed.importedObservations).toBe(3);
+      expect(langfuse.state.observationListCalls).toBe(1);
+      expect(langfuse.state.legacyObservationListCalls).toBe(1);
+      expect(langfuse.state.traceDetailCalls).toBe(0);
+      const trace = getTrace(database.sqlite, makeLangfuseTrace().id);
+      expect(trace?.rootSpanName).toBe("agent.run");
+    } finally {
+      await service.close(true);
+      database.sqlite.close(false);
+    }
+  });
+
+  test("falls back to trace details when observation APIs are unavailable", async () => {
+    const langfuse = startFakeLangfuse({
+      legacyObservationsStatus: 404,
+      observationsV2Status: 404,
+    });
+    const database = createDatabase(":memory:");
+    ensureSchema(database.sqlite);
+    const live = createLiveEventStore(database.sqlite);
+    const service = createLangfuseImportService({ database, live });
+
+    try {
+      const discovery = await discoverLangfuse({
+        baseUrl: langfuse.baseUrl,
+        publicKey: PUBLIC_KEY,
+        secretKey: SECRET_KEY,
+      });
+      const connection = saveLangfuseConnection(database.sqlite, {
+        baseUrl: discovery.baseUrl,
+        discovery,
+        name: "Fake Langfuse",
+        publicKey: PUBLIC_KEY,
+        secretKey: SECRET_KEY,
+      });
+
+      const job = await service.start({
+        connectionId: connection.id,
+        filters: { fromTimestamp: "2026-05-01T00:00:00.000Z" },
+      });
+      const completed = await waitForImportJob(database.sqlite, job.id, "completed");
+
+      expect(completed.importedTraces).toBe(1);
+      expect(completed.importedObservations).toBe(3);
+      expect(langfuse.state.observationListCalls).toBe(1);
+      expect(langfuse.state.legacyObservationListCalls).toBe(1);
+      expect(langfuse.state.traceDetailCalls).toBe(1);
+    } finally {
+      await service.close(true);
+      database.sqlite.close(false);
+    }
+  });
+
+  test("fast and fallback import paths produce identical normalized trace state", async () => {
+    const fastPath = await importNormalizedTraceState();
+    const legacyFallback = await importNormalizedTraceState({
+      observationsV2Status: 404,
+    });
+    const detailFallback = await importNormalizedTraceState({
+      legacyObservationsStatus: 404,
+      observationsV2Status: 404,
+    });
+
+    expect(fastPath.calls.observationListCalls).toBe(1);
+    expect(fastPath.calls.legacyObservationListCalls).toBe(0);
+    expect(fastPath.calls.traceDetailCalls).toBe(0);
+    expect(legacyFallback.calls.observationListCalls).toBe(1);
+    expect(legacyFallback.calls.legacyObservationListCalls).toBe(1);
+    expect(legacyFallback.calls.traceDetailCalls).toBe(0);
+    expect(detailFallback.calls.observationListCalls).toBe(1);
+    expect(detailFallback.calls.legacyObservationListCalls).toBe(1);
+    expect(detailFallback.calls.traceDetailCalls).toBe(1);
+
+    expect(legacyFallback.state).toEqual(fastPath.state);
+    expect(detailFallback.state).toEqual(fastPath.state);
+  });
 });
 
-function startFakeLangfuse() {
+async function importNormalizedTraceState(
+  input: { legacyObservationsStatus?: number; observationsV2Status?: number } = {},
+) {
+  const langfuse = startFakeLangfuse(input);
+  const database = createDatabase(":memory:");
+  ensureSchema(database.sqlite);
+  const live = createLiveEventStore(database.sqlite);
+  const service = createLangfuseImportService({ database, live });
+
+  try {
+    const discovery = await discoverLangfuse({
+      baseUrl: langfuse.baseUrl,
+      publicKey: PUBLIC_KEY,
+      secretKey: SECRET_KEY,
+    });
+    const connection = saveLangfuseConnection(database.sqlite, {
+      baseUrl: discovery.baseUrl,
+      discovery,
+      id: "fake-langfuse-connection",
+      name: "Fake Langfuse",
+      publicKey: PUBLIC_KEY,
+      secretKey: SECRET_KEY,
+    });
+
+    const job = await service.start({
+      connectionId: connection.id,
+      filters: { fromTimestamp: "2026-05-01T00:00:00.000Z" },
+    });
+    await waitForImportJob(database.sqlite, job.id, "completed");
+
+    return {
+      calls: { ...langfuse.state },
+      state: normalizedTraceState(database.sqlite),
+    };
+  } finally {
+    await service.close(true);
+    database.sqlite.close(false);
+  }
+}
+
+function normalizedTraceState(sqlite: ReturnType<typeof createDatabase>["sqlite"]) {
+  return {
+    searchRows: sqlite
+      .query<Record<string, unknown>, []>(
+        `SELECT project_id, trace_id, span_id, content
+         FROM span_search_fts
+         ORDER BY project_id, trace_id, span_id`,
+      )
+      .all(),
+    spans: sqlite
+      .query<Record<string, unknown>, []>(
+        `SELECT *
+         FROM spans
+         ORDER BY project_id, trace_id, span_id`,
+      )
+      .all()
+      .map((row) =>
+        normalizeRow(row, {
+          drop: ["id", "ingested_at"],
+          jsonColumns: [
+            "events_json",
+            "input_messages",
+            "links_json",
+            "output_messages",
+            "resource_attributes",
+            "resource_attributes_double",
+            "resource_attributes_int",
+            "span_attributes",
+            "span_attributes_double",
+            "span_attributes_int",
+          ],
+        }),
+      ),
+    traces: sqlite
+      .query<Record<string, unknown>, []>(
+        `SELECT *
+         FROM trace_summaries
+         ORDER BY project_id, trace_id`,
+      )
+      .all()
+      .map((row) =>
+        normalizeRow(row, {
+          drop: [
+            "id",
+            "source_import_job_id",
+            "source_imported_at",
+            "updated_at",
+          ],
+          jsonColumns: ["source_tags_json"],
+        }),
+      ),
+  };
+}
+
+function normalizeRow(
+  row: Record<string, unknown>,
+  input: { drop: string[]; jsonColumns: string[] },
+) {
+  const normalized: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(row)) {
+    if (input.drop.includes(key)) continue;
+    if (key === "source_url" && typeof value === "string") {
+      normalized[key] = normalizeSourceUrl(value);
+      continue;
+    }
+    normalized[key] = input.jsonColumns.includes(key)
+      ? normalizeJsonColumn(key, value)
+      : value;
+  }
+  return normalized;
+}
+
+function normalizeJsonColumn(key: string, value: unknown) {
+  if (typeof value !== "string" || !value) return value;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (key === "span_attributes") {
+      removeVolatileSpanAttributes(parsed);
+    }
+    return sortJson(parsed);
+  } catch {
+    return value;
+  }
+}
+
+function removeVolatileSpanAttributes(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return;
+  const record = value as Record<string, unknown>;
+  delete record["halo.source.import_job_id"];
+  delete record["halo.source.imported_at"];
+  if (typeof record["halo.source.url"] === "string") {
+    record["halo.source.url"] = normalizeSourceUrl(record["halo.source.url"]);
+  }
+  if (typeof record["langfuse.trace.url"] === "string") {
+    record["langfuse.trace.url"] = normalizeSourceUrl(record["langfuse.trace.url"]);
+  }
+}
+
+function sortJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJson);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, child]) => [key, sortJson(child)]),
+  );
+}
+
+function normalizeSourceUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return url.pathname;
+  } catch {
+    return value;
+  }
+}
+
+function startFakeLangfuse(
+  input: { legacyObservationsStatus?: number; observationsV2Status?: number } = {},
+) {
+  const state = {
+    legacyObservationListCalls: 0,
+    observationListCalls: 0,
+    traceDetailCalls: 0,
+  };
   const app = new Hono();
   app.get("/api/public/health", (c) => c.json({ status: "OK" }));
   app.use("/api/public/*", async (c, next) => {
@@ -214,10 +526,36 @@ function startFakeLangfuse() {
   app.get("/api/public/traces", (c) =>
     c.json({
       data: [makeLangfuseTraceListItem()],
-      meta: { limit: 50, page: 1, totalItems: 1, totalPages: 1 },
+      meta: { limit: 1000, page: 1, totalItems: 1, totalPages: 1 },
     }),
   );
-  app.get("/api/public/traces/:traceId", (c) => c.json(makeLangfuseTrace()));
+  app.get("/api/public/v2/observations", (c) => {
+    state.observationListCalls += 1;
+    if (input.observationsV2Status) {
+      return new Response("unsupported", { status: input.observationsV2Status });
+    }
+    const traceIds = traceIdsFromObservationFilter(c.req.query("filter"));
+    return c.json({
+      data: makeLangfuseTrace().observations.filter((observation) =>
+        traceIds.includes(observation.traceId),
+      ),
+      meta: { cursor: null },
+    });
+  });
+  app.get("/api/public/observations", (c) => {
+    state.legacyObservationListCalls += 1;
+    if (input.legacyObservationsStatus) {
+      return new Response("unsupported", { status: input.legacyObservationsStatus });
+    }
+    return c.json({
+      data: makeLangfuseTrace().observations,
+      meta: { limit: 100, page: 1, totalItems: 3, totalPages: 1 },
+    });
+  });
+  app.get("/api/public/traces/:traceId", (c) => {
+    state.traceDetailCalls += 1;
+    return c.json(makeLangfuseTrace());
+  });
 
   const server = Bun.serve({
     fetch: app.fetch,
@@ -225,7 +563,16 @@ function startFakeLangfuse() {
     port: 0,
   });
   servers.push(server);
-  return { baseUrl: `http://127.0.0.1:${server.port}` };
+  return { baseUrl: `http://127.0.0.1:${server.port}`, state };
+}
+
+function traceIdsFromObservationFilter(input: string | undefined) {
+  if (!input) return [];
+  const parsed = JSON.parse(input) as Array<{ column?: string; value?: unknown }>;
+  const traceIdFilter = parsed.find((filter) => filter.column === "traceId");
+  return Array.isArray(traceIdFilter?.value)
+    ? traceIdFilter.value.filter((value): value is string => typeof value === "string")
+    : [];
 }
 
 async function waitForImportJob(
@@ -248,8 +595,21 @@ async function waitForImportJob(
 function makeLangfuseTraceListItem() {
   return {
     environment: "production",
+    htmlPath: "/project/project-1/traces/0123456789abcdef0123456789abcdef",
     id: "0123456789abcdef0123456789abcdef",
+    input: { prompt: "List contacts" },
+    metadata: {
+      attributes: {
+        "agent.id": "gator-flue-agent",
+        "agent.name": "Gator Flue Agent",
+      },
+      resourceAttributes: {
+        "service.name": "gator-agent",
+        "service.version": "0.0.1",
+      },
+    },
     name: "agent.run",
+    output: { response: "Here are contacts" },
     release: "2026.05",
     sessionId: "session-1",
     tags: ["agent", "local"],

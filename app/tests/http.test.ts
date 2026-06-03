@@ -59,6 +59,23 @@ describe("telemetry HTTP server", () => {
     expect(traces.traces[0]?.traceId).toBe(TRACE_ID);
   });
 
+  test("accepts common OTLP trace path aliases", async () => {
+    for (const path of ["/v1/otel/v1/traces", "/otel/v1/traces"]) {
+      const response = await fetch(`${baseUrl}${path}`, {
+        body: JSON.stringify(makeTracePayload()),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      });
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({});
+    }
+
+    const info = await client.telemetry.info.query();
+    expect(info.traceCount).toBe(1);
+    expect(info.spanCount).toBe(2);
+  });
+
   test("accepts gzip-compressed OTLP JSON", async () => {
     const compressed = Bun.gzipSync(JSON.stringify(makeTracePayload()));
     const response = await fetch(`${baseUrl}/v1/traces`, {

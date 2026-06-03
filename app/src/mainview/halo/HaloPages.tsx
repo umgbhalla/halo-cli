@@ -1,4 +1,5 @@
 import { useDeferredValue, useMemo, useState, type ReactNode } from "react";
+import { Link } from "@tanstack/react-router";
 import {
   AlertCircle,
   BrainCircuit,
@@ -19,6 +20,7 @@ import {
 import {
   Badge,
   Button,
+  InferenceIcon,
   Input,
   Sheet,
   SheetContent,
@@ -141,7 +143,7 @@ export function AnalysisPage({
         icon={<BrainCircuit className="h-4 w-4 text-detail-brand" />}
         title="Analysis"
       />
-      <div className="grid min-h-[calc(100vh-3.5rem)] grid-cols-[112px_minmax(0,1fr)] pt-14">
+      <div className="grid min-h-[calc(100vh-3.5rem)] grid-cols-[14rem_minmax(0,1fr)] pt-14">
         <WorkspaceNav active="analysis" />
         <section className="min-w-0 overflow-auto">
           <div className="mx-auto flex max-w-7xl flex-col gap-5 p-6">
@@ -406,7 +408,7 @@ export function SettingsPage() {
         icon={<Settings className="h-4 w-4 text-detail-brand" />}
         title="Settings"
       />
-      <div className="grid min-h-[calc(100vh-3.5rem)] grid-cols-[112px_minmax(0,1fr)] pt-14">
+      <div className="grid min-h-[calc(100vh-3.5rem)] grid-cols-[14rem_minmax(0,1fr)] pt-14">
         <WorkspaceNav active="settings" />
         <section className="min-w-0 overflow-auto">
           <div className="mx-auto grid max-w-6xl gap-5 p-6 xl:grid-cols-[minmax(0,1fr)_420px]">
@@ -664,9 +666,17 @@ function WorkspaceHeader({
   title: string;
 }) {
   return (
-    <div className="electrobun-webkit-app-region-drag fixed inset-x-0 top-0 z-40 grid h-14 select-none grid-cols-[112px_minmax(0,1fr)] border-b border-subtle bg-background/95 backdrop-blur">
-      <div className="border-r border-subtle" />
-      <div className="flex min-w-0 items-center justify-between gap-4 px-4">
+    <div className="electrobun-webkit-app-region-drag fixed inset-x-0 top-0 z-40 grid h-14 select-none grid-cols-[14rem_minmax(0,1fr)]">
+      <div className="flex h-14 items-center border-r border-border/50 bg-sidebar px-5">
+        <Link
+          className="electrobun-webkit-app-region-no-drag"
+          search={{} as never}
+          to="/traces"
+        >
+          <InferenceIcon height={20} width={120} />
+        </Link>
+      </div>
+      <div className="flex min-w-0 items-center justify-between gap-4 border-b border-border/50 bg-sidebar px-6">
         <div className="flex min-w-0 items-center gap-3">
           <div className="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-subtle bg-card">
             {icon}

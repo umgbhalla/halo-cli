@@ -9,7 +9,7 @@ import {
 describe("desktop command helpers", () => {
   test("maps workspace menu commands to routes", () => {
     expect(routeForCommand("navigate-traces")).toBe("traces");
-    expect(routeForCommand("navigate-sessions")).toBe("sessions");
+    expect(routeForCommand("navigate-sessions")).toBe("traces");
     expect(routeForCommand("navigate-analysis")).toBe("analysis");
     expect(routeForCommand("navigate-settings")).toBe("settings");
     expect(routeForCommand("preferences")).toBe("settings");

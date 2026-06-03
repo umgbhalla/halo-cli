@@ -86,6 +86,7 @@ type QueryParams = Record<string, string | number | null>;
 export interface IngestTelemetryInput {
   body: string;
   contentEncoding: string;
+  searchMode?: "compact" | "full" | "none";
   sizeBytes: number;
 }
 
@@ -143,7 +144,9 @@ export function ingestTelemetry(
   const transaction = sqlite.transaction(() => {
     for (const row of rows) {
       upsertSpan(sqlite, row);
-      upsertSearch(sqlite, row);
+      if (input.searchMode !== "none") {
+        upsertSearch(sqlite, row, input.searchMode ?? "full");
+      }
     }
 
     for (const traceId of traceIds) {
@@ -277,7 +280,11 @@ function upsertSpan(sqlite: Database, row: SpanDbRow) {
     .run(...values);
 }
 
-function upsertSearch(sqlite: Database, row: SpanDbRow) {
+function upsertSearch(
+  sqlite: Database,
+  row: SpanDbRow,
+  searchMode: "compact" | "full",
+) {
   sqlite
     .query(
       `DELETE FROM span_search_fts
@@ -293,7 +300,36 @@ function upsertSearch(sqlite: Database, row: SpanDbRow) {
       `INSERT INTO span_search_fts (project_id, trace_id, span_id, content)
        VALUES (?, ?, ?, ?)`,
     )
-    .run(row.project_id, row.trace_id, row.span_id, buildSearchContent(row));
+    .run(
+      row.project_id,
+      row.trace_id,
+      row.span_id,
+      searchMode === "compact"
+        ? buildCompactSearchContent(row)
+        : buildSearchContent(row),
+    );
+}
+
+function buildCompactSearchContent(row: SpanDbRow): string {
+  return [
+    row.trace_id,
+    row.span_id,
+    row.parent_span_id,
+    row.span_name,
+    row.service_name,
+    row.scope_name,
+    row.status_message,
+    row.observation_kind,
+    row.llm_provider,
+    row.llm_model_name,
+    row.llm_response_model,
+    row.user_id,
+    row.session_id,
+    row.agent_name,
+    row.agent_id,
+  ]
+    .filter((value) => value != null && value !== "")
+    .join("\n");
 }
 
 function buildSearchContent(row: SpanDbRow): string {

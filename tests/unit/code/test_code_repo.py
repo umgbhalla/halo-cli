@@ -238,8 +238,20 @@ def test_read_empty_file(tmp_path: Path) -> None:
     repo = CodeRepo.open(root)
     result = repo.read("empty.txt", 1, 500)
     assert result.content == ""
+    assert result.start_line == 0
     assert result.end_line == 0
     assert result.total_line_count == 0
+    assert result.truncated is False
+
+
+def test_read_offset_past_eof(tmp_path: Path) -> None:
+    """An offset beyond the last line yields an empty, non-contradictory window."""
+    repo = CodeRepo.open(_build_repo(tmp_path))
+    result = repo.read("engine/main.py", 99, 10)  # main.py has 2 lines
+    assert result.content == ""
+    assert result.start_line == 0
+    assert result.end_line == 0
+    assert result.total_line_count == 2
     assert result.truncated is False
 
 

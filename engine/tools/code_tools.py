@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from engine.code.models import (
     GlobFilesArguments,
     GlobFilesResult,
@@ -38,7 +40,9 @@ class ViewRepoTreeTool:
         """Return the cached (lazily rendered) repo tree overview."""
         del arguments
         repo = tool_context.require_code_repo()
-        return ViewRepoTreeResult(result=RepoTree(root=str(repo.root), tree=repo.tree))
+        # ``repo.tree`` shells out to ripgrep on first access — off the event loop.
+        tree = await asyncio.to_thread(lambda: repo.tree)
+        return ViewRepoTreeResult(result=RepoTree(root=str(repo.root), tree=tree))
 
 
 class GlobFilesTool:
@@ -66,7 +70,9 @@ class GlobFilesTool:
     ) -> GlobFilesResult:
         """Match files against the glob pattern, confined to the repo root."""
         repo = tool_context.require_code_repo()
-        return GlobFilesResult(result=repo.glob(arguments.pattern, arguments.max_results))
+        # ripgrep subprocess — run off the event loop so concurrent agents don't stall.
+        result = await asyncio.to_thread(repo.glob, arguments.pattern, arguments.max_results)
+        return GlobFilesResult(result=result)
 
 
 class GrepFilesTool:
@@ -90,13 +96,14 @@ class GrepFilesTool:
     ) -> GrepFilesResult:
         """Run a bounded regex search over repo file contents."""
         repo = tool_context.require_code_repo()
-        return GrepFilesResult(
-            result=repo.grep(
-                regex_pattern=arguments.regex_pattern,
-                glob_pattern=arguments.glob_pattern,
-                max_matches=arguments.max_matches,
-            )
+        # ripgrep subprocess — run off the event loop so concurrent agents don't stall.
+        result = await asyncio.to_thread(
+            repo.grep,
+            arguments.regex_pattern,
+            arguments.glob_pattern,
+            arguments.max_matches,
         )
+        return GrepFilesResult(result=result)
 
 
 class ReadFileTool:
@@ -116,10 +123,11 @@ class ReadFileTool:
     async def run(self, tool_context: ToolContext, arguments: ReadFileArguments) -> ReadFileResult:
         """Read a 1-based line window of the file, confined to the repo root."""
         repo = tool_context.require_code_repo()
-        return ReadFileResult(
-            result=repo.read(
-                path=arguments.path,
-                offset=arguments.offset,
-                limit=arguments.limit,
-            )
+        # File I/O — run off the event loop so concurrent agents don't stall.
+        result = await asyncio.to_thread(
+            repo.read,
+            arguments.path,
+            arguments.offset,
+            arguments.limit,
         )
+        return ReadFileResult(result=result)

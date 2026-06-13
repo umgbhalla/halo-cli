@@ -192,24 +192,53 @@ class CodeRepo:
             args += ["-g", glob_pattern]
         args += self._exclude_glob_args()
         args += ["-e", regex_pattern, "."]
-        completed = subprocess.run(args, cwd=self._root, capture_output=True, text=True)
-        # rg exit codes: 0 = matches, 1 = no matches, >=2 = error (e.g. bad regex).
-        if completed.returncode >= 2:
-            raise ValueError(f"grep failed: {completed.stderr.strip()}")
 
+        # Stream rg's output and stop once we have one match past the cap, so a
+        # broad pattern (e.g. ``.``) on a large repo can't buffer megabytes of
+        # stdout just to return a capped slice. The extra match only sets
+        # ``has_more`` — we don't need the exact total.
         matches: list[GrepMatchRecord] = []
-        total = 0
-        for line in completed.stdout.splitlines():
-            parsed = self._parse_ripgrep_line(line)
-            if parsed is None:
-                continue
-            total += 1
-            if len(matches) < max_matches:
-                matches.append(parsed)
+        has_more = False
+        proc = subprocess.Popen(
+            args,
+            cwd=self._root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                parsed = self._parse_ripgrep_line(line)
+                if parsed is None:
+                    continue
+                if len(matches) < max_matches:
+                    matches.append(parsed)
+                    continue
+                has_more = True
+                break
+            if has_more:
+                proc.terminate()
+            returncode = proc.wait()
+            # rg exit codes: 0 = matches, 1 = no matches, >=2 = error (e.g. bad
+            # regex). When we stopped early the process is terminated, so its
+            # code is meaningless — only check it on a natural end.
+            if not has_more and returncode >= 2:
+                stderr = proc.stderr.read() if proc.stderr else ""
+                raise ValueError(f"grep failed: {stderr.strip()}")
+        finally:
+            if proc.stdout is not None:
+                proc.stdout.close()
+            if proc.stderr is not None:
+                proc.stderr.close()
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+
         return GrepMatches(
             matches=matches,
             returned_match_count=len(matches),
-            has_more=total > len(matches),
+            has_more=has_more,
         )
 
     def _parse_ripgrep_line(self, line: str) -> GrepMatchRecord | None:
@@ -249,33 +278,26 @@ class CodeRepo:
     def read(self, path: str, offset: int, limit: int) -> FileContent:
         """Return a 1-based ``[offset, offset+limit)`` window of ``path`` as ``cat -n`` numbered lines.
 
-        Confines the path, rejects non-files and binary files, decodes UTF-8
-        with replacement, caps each line at ``_READ_LINE_CAP_CHARS`` and total
-        output at ``_READ_RESPONSE_CHAR_BUDGET``. ``truncated`` flags any clip.
+        Confines the path and rejects non-files and binary files (sniffing only
+        the file head). Streams the file line-by-line — constant memory rather
+        than loading and decoding the whole file — so a small window over a
+        multi-megabyte file is cheap. Line numbering is ``\\n``-based, matching
+        ripgrep, so ``read_file`` and ``grep_files`` agree on line numbers. Each
+        line is capped at ``_READ_LINE_CAP_CHARS`` and total output at
+        ``_READ_RESPONSE_CHAR_BUDGET``; ``truncated`` flags either clip.
+        ``start_line``/``end_line`` are ``0`` when the window is empty.
         """
         resolved = self._resolve_confined(path)
         if not resolved.is_file():
             raise ValueError(f"not a file: {path!r}")
-        blob = resolved.read_bytes()
-        if _looks_binary(blob):
-            raise ValueError(f"binary file: {path!r}; read_file only supports text files")
+        rel = resolved.relative_to(self._root).as_posix()
 
-        text = blob.decode("utf-8", errors="replace")
-        lines = text.splitlines()
-        total_line_count = len(lines)
-        if total_line_count == 0:
-            return FileContent(
-                path=resolved.relative_to(self._root).as_posix(),
-                content="",
-                start_line=offset,
-                end_line=0,
-                total_line_count=0,
-                truncated=False,
-            )
+        # Sniff only the head for a NUL — avoid reading the whole file to classify it.
+        with resolved.open("rb") as fh:
+            if _looks_binary(fh.read(_BINARY_SNIFF_BYTES)):
+                raise ValueError(f"binary file: {path!r}; read_file only supports text files")
 
-        start_index = offset - 1
-        window = lines[start_index : start_index + limit]
-
+        end_exclusive = offset + limit
         rendered: list[str] = []
         # ``truncated`` means output was clipped *within* the requested window —
         # a line hit the per-line cap, or the response budget cut the window
@@ -283,27 +305,41 @@ class CodeRepo:
         # file: the caller sees that from ``total_line_count`` vs ``end_line``.
         truncated = False
         used_chars = 0
-        last_line_number = offset - 1
-        for i, line in enumerate(window):
-            line_number = offset + i
-            if len(line) > _READ_LINE_CAP_CHARS:
-                line = (
-                    f"{line[:_READ_LINE_CAP_CHARS]}... [HALO truncated: original {len(line)} chars]"
-                )
-                truncated = True
-            entry = f"{line_number:6d}\t{line}"
-            if used_chars + len(entry) > _READ_RESPONSE_CHAR_BUDGET:
-                truncated = True
-                break
-            rendered.append(entry)
-            used_chars += len(entry) + 1
-            last_line_number = line_number
+        start_line = 0
+        end_line = 0
+        total_line_count = 0
+        # ``newline="\n"`` splits on ``\n`` only (matching ripgrep's line counting);
+        # the per-line CR/LF terminator is stripped below.
+        with resolved.open("r", encoding="utf-8", errors="replace", newline="\n") as fh:
+            for line_number, raw_line in enumerate(fh, start=1):
+                total_line_count = line_number
+                if not (offset <= line_number < end_exclusive):
+                    continue
+                if truncated:
+                    # Past the response budget — keep iterating only to finish
+                    # counting total_line_count.
+                    continue
+                line = raw_line[:-1] if raw_line.endswith("\n") else raw_line
+                if line.endswith("\r"):
+                    line = line[:-1]
+                if len(line) > _READ_LINE_CAP_CHARS:
+                    line = f"{line[:_READ_LINE_CAP_CHARS]}... [HALO truncated: original {len(line)} chars]"
+                    truncated = True
+                entry = f"{line_number:6d}\t{line}"
+                if used_chars + len(entry) > _READ_RESPONSE_CHAR_BUDGET:
+                    truncated = True
+                    continue
+                rendered.append(entry)
+                used_chars += len(entry) + 1
+                if start_line == 0:
+                    start_line = line_number
+                end_line = line_number
 
         return FileContent(
-            path=resolved.relative_to(self._root).as_posix(),
+            path=rel,
             content="\n".join(rendered),
-            start_line=offset,
-            end_line=max(last_line_number, 0),
+            start_line=start_line,
+            end_line=end_line,
             total_line_count=total_line_count,
             truncated=truncated,
         )

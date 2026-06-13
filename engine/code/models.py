@@ -116,17 +116,18 @@ class FileContent(BaseModel):
     """A window of a file's contents as ``cat -n`` numbered lines.
 
     ``start_line``/``end_line`` are the 1-based inclusive bounds of the returned
-    window (``end_line`` is 0 for an empty file). ``total_line_count`` is the
-    file's full length so the caller can page with ``offset``. ``truncated`` is
-    true when a per-line cap or the per-call response budget clipped output —
-    request a narrower window or grep for what you need.
+    window, and are both ``0`` when the window is empty (an empty file, or an
+    ``offset`` past the last line). ``total_line_count`` is the file's full
+    length so the caller can page with ``offset``. ``truncated`` is true when a
+    per-line cap or the per-call response budget clipped output — request a
+    narrower window or grep for what you need.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     path: str
     content: str
-    start_line: int = Field(ge=1)
+    start_line: int = Field(ge=0)
     end_line: int = Field(ge=0)
     total_line_count: int = Field(ge=0)
     truncated: bool

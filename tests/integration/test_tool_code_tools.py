@@ -89,10 +89,14 @@ async def test_read_file_confinement_error_through_sdk_adapter(
     tmp_path: Path, fixtures_dir: Path
 ) -> None:
     tools = await _code_tools(tmp_path, fixtures_dir)
-    # An escaping path raises ValueError from the tool; in a real run the SDK's
-    # tool dispatcher converts that into a model-visible error result. Invoked
-    # directly here, the exception propagates unchanged.
-    with pytest.raises(ValueError, match="outside the repo root"):
-        await tools["read_file"].on_invoke_tool(
-            MagicMock(spec=SdkToolContext), '{"path": "../../../etc/hosts"}'
-        )
+    # An escaping path raises ValueError inside the tool. The adapter catches it
+    # and returns a model-visible error result instead of propagating, so a bad
+    # path the model picks never aborts the run — it just gets fed back.
+    output = await tools["read_file"].on_invoke_tool(
+        MagicMock(spec=SdkToolContext), '{"path": "../../../etc/hosts"}'
+    )
+    assert output == (
+        "An error occurred while running the tool. Please try again. "
+        "Error: path '../../../etc/hosts' resolves outside the repo root; "
+        "pass a path relative to the repo root"
+    )

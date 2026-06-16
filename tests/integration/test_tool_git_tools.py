@@ -121,7 +121,14 @@ async def test_git_read_file_confinement_error_through_sdk_adapter(
     tmp_path: Path, fixtures_dir: Path
 ) -> None:
     tools = await _git_tools(tmp_path, fixtures_dir)
-    with pytest.raises(ValueError, match="outside the repo root"):
-        await tools["git_read_file"].on_invoke_tool(
-            MagicMock(spec=SdkToolContext), '{"ref": "HEAD", "path": "../../../etc/hosts"}'
-        )
+    # An escaping path raises ValueError inside the tool. The adapter catches it
+    # and returns a model-visible error result instead of propagating, so a bad
+    # path the model picks never aborts the run — it just gets fed back.
+    output = await tools["git_read_file"].on_invoke_tool(
+        MagicMock(spec=SdkToolContext), '{"ref": "HEAD", "path": "../../../etc/hosts"}'
+    )
+    assert output == (
+        "An error occurred while running the tool. Please try again. "
+        "Error: path '../../../etc/hosts' resolves outside the repo root; "
+        "pass a path relative to the repo root"
+    )

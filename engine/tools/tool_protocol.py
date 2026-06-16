@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from agents import FunctionTool, RunContextWrapper
+from agents import FunctionTool, RunContextWrapper, default_tool_error_function
 from pydantic import BaseModel, ConfigDict
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from engine.agents.agent_context import AgentContext
@@ -106,10 +109,24 @@ def to_sdk_function_tool(
     arguments_model = tool.arguments_model
 
     async def _invoke(ctx: RunContextWrapper[Any], raw_arguments: str) -> str:
-        parsed = arguments_model.model_validate_json(raw_arguments or "{}")
-        tool_context = context_factory(ctx)
-        result = await tool.run(tool_context, parsed)
-        return result.model_dump_json()
+        # A directly-constructed FunctionTool carries no failure handler, so an
+        # exception here propagates and the SDK aborts the whole run with a fatal
+        # UserError. Mirror the SDK's ``function_tool`` default: turn tool failures
+        # (a model picking a bad path, malformed arguments) into a result string so
+        # the model sees the error and can recover on the next turn.
+        try:
+            parsed = arguments_model.model_validate_json(raw_arguments or "{}")
+            tool_context = context_factory(ctx)
+            result = await tool.run(tool_context, parsed)
+            return result.model_dump_json()
+        except Exception as error:
+            logger.warning(
+                "tool %s failed; returning error to model: %s: %s",
+                tool.name,
+                type(error).__name__,
+                error,
+            )
+            return default_tool_error_function(ctx, error)
 
     schema = arguments_model.model_json_schema()
     return FunctionTool(

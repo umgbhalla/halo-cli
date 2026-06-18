@@ -256,3 +256,278 @@ def test_from_input_messages_caller_system_left_alone() -> None:
     roles = [i.role for i in ctx.items]
     assert roles == ["system", "user"]
     assert ctx.items[1].content == "Hi"
+
+
+def _tool_call(call_id: str, name: str = "query_traces") -> AgentToolCall:
+    return AgentToolCall(
+        id=call_id,
+        type="function",
+        function=AgentToolFunction(name=name, arguments="{}"),
+    )
+
+
+def test_trim_incomplete_tool_turn_drops_orphan_tool_calls() -> None:
+    ctx = _ctx()
+    ctx.append(AgentContextItem(item_id="u1", role="user", content="question"))
+    ctx.append(AgentContextItem(item_id="a1", role="assistant", tool_calls=[_tool_call("call_1")]))
+    ctx.append(AgentContextItem(item_id="t1", role="tool", content="result", tool_call_id="call_1"))
+    ctx.append(
+        AgentContextItem(
+            item_id="a2",
+            role="assistant",
+            tool_calls=[_tool_call("call_2"), _tool_call("call_3")],
+        )
+    )
+    ctx.append(
+        AgentContextItem(item_id="t2", role="tool", content="partial", tool_call_id="call_2")
+    )
+
+    removed = ctx.trim_incomplete_tool_turn()
+
+    assert [i.item_id for i in removed] == ["a2", "t2"]
+    assert [i.item_id for i in ctx.items] == ["u1", "a1", "t1"]
+    with pytest.raises(KeyError):
+        ctx.get_item("a2")
+
+
+def test_trim_incomplete_tool_turn_keeps_complete_history() -> None:
+    ctx = _ctx()
+    ctx.append(AgentContextItem(item_id="u1", role="user", content="question"))
+    ctx.append(AgentContextItem(item_id="a1", role="assistant", tool_calls=[_tool_call("call_1")]))
+    ctx.append(AgentContextItem(item_id="t1", role="tool", content="result", tool_call_id="call_1"))
+    ctx.append(AgentContextItem(item_id="a2", role="assistant", content="all done"))
+
+    assert ctx.trim_incomplete_tool_turn() == []
+    assert [i.item_id for i in ctx.items] == ["u1", "a1", "t1", "a2"]
+
+
+def test_trim_incomplete_tool_turn_respects_min_items() -> None:
+    """Items that existed before the failed attempt are never trimmed, even if
+    an earlier turn looks incomplete (e.g. caller-supplied continuation input)."""
+    ctx = _ctx()
+    ctx.append(AgentContextItem(item_id="a1", role="assistant", tool_calls=[_tool_call("call_1")]))
+
+    assert ctx.trim_incomplete_tool_turn(min_items=1) == []
+    assert [i.item_id for i in ctx.items] == ["a1"]
+
+
+def test_trim_drops_trailing_orphan_tool_row_keeping_complete_turns() -> None:
+    """A ``role=tool`` row referencing some OTHER call id is an orphan that
+    would render an invalid message array. Only the orphan (and anything after
+    it) is dropped — the complete turns before it are kept."""
+    ctx = _ctx()
+    ctx.append(AgentContextItem(item_id="u1", role="user", content="question"))
+    ctx.append(AgentContextItem(item_id="a1", role="assistant", tool_calls=[_tool_call("call_1")]))
+    ctx.append(AgentContextItem(item_id="t1", role="tool", content="result", tool_call_id="call_1"))
+    ctx.append(AgentContextItem(item_id="a2", role="assistant", tool_calls=[_tool_call("call_2")]))
+    ctx.append(AgentContextItem(item_id="t2", role="tool", content="result", tool_call_id="call_2"))
+    ctx.append(
+        AgentContextItem(item_id="t3", role="tool", content="stray", tool_call_id="call_stale")
+    )
+
+    removed = ctx.trim_incomplete_tool_turn()
+
+    assert [i.item_id for i in removed] == ["t3"]
+    assert [i.item_id for i in ctx.items] == ["u1", "a1", "t1", "a2", "t2"]
+    with pytest.raises(KeyError):
+        ctx.get_item("t3")
+
+
+def test_trim_drops_orphan_tool_rows_with_no_tool_turn_in_range() -> None:
+    """A failed attempt that appended only a tool row for a call id from a
+    previously trimmed attempt (no assistant tool-call item this attempt)
+    must still be cleaned up."""
+    ctx = _ctx()
+    ctx.append(AgentContextItem(item_id="u1", role="user", content="question"))
+    ctx.append(AgentContextItem(item_id="a1", role="assistant", tool_calls=[_tool_call("call_1")]))
+    ctx.append(AgentContextItem(item_id="t1", role="tool", content="result", tool_call_id="call_1"))
+    ctx.append(
+        AgentContextItem(item_id="t2", role="tool", content="stray", tool_call_id="call_stale")
+    )
+
+    removed = ctx.trim_incomplete_tool_turn(min_items=3)
+
+    assert [i.item_id for i in removed] == ["t2"]
+    assert [i.item_id for i in ctx.items] == ["u1", "a1", "t1"]
+
+
+def test_trim_keeps_tool_rows_completing_protected_prior_turn() -> None:
+    """Tool rows appended during the attempt that resolve the nearest
+    preceding (min_items-protected) tool-call turn are valid, not orphans."""
+    ctx = _ctx()
+    ctx.append(AgentContextItem(item_id="u1", role="user", content="question"))
+    ctx.append(AgentContextItem(item_id="a1", role="assistant", tool_calls=[_tool_call("call_1")]))
+    ctx.append(AgentContextItem(item_id="t1", role="tool", content="result", tool_call_id="call_1"))
+
+    assert ctx.trim_incomplete_tool_turn(min_items=2) == []
+    assert [i.item_id for i in ctx.items] == ["u1", "a1", "t1"]
+
+
+def test_trim_drops_all_rows_of_parallel_turn_with_no_results() -> None:
+    """The mapper emits one assistant row per parallel tool call. A mid-stream
+    failure before any result must trim EVERY row of the turn — leaving an
+    earlier row behind would render an assistant tool_call with no matching
+    result and 400 again on rerun."""
+    ctx = _ctx()
+    ctx.append(AgentContextItem(item_id="u1", role="user", content="question"))
+    ctx.append(AgentContextItem(item_id="a1", role="assistant", tool_calls=[_tool_call("call_1")]))
+    ctx.append(AgentContextItem(item_id="a2", role="assistant", tool_calls=[_tool_call("call_2")]))
+
+    removed = ctx.trim_incomplete_tool_turn()
+
+    assert [i.item_id for i in removed] == ["a1", "a2"]
+    assert [i.item_id for i in ctx.items] == ["u1"]
+    with pytest.raises(KeyError):
+        ctx.get_item("a1")
+
+
+def test_trim_drops_all_rows_of_parallel_turn_with_partial_results() -> None:
+    """One assistant row per parallel call, only some results in. The whole
+    turn (all assistant rows and the partial result) is trimmed together."""
+    ctx = _ctx()
+    ctx.append(AgentContextItem(item_id="u1", role="user", content="question"))
+    ctx.append(AgentContextItem(item_id="a1", role="assistant", tool_calls=[_tool_call("call_1")]))
+    ctx.append(AgentContextItem(item_id="a2", role="assistant", tool_calls=[_tool_call("call_2")]))
+    ctx.append(AgentContextItem(item_id="t1", role="tool", content="result", tool_call_id="call_1"))
+
+    removed = ctx.trim_incomplete_tool_turn()
+
+    assert [i.item_id for i in removed] == ["a1", "a2", "t1"]
+    assert [i.item_id for i in ctx.items] == ["u1"]
+
+
+def test_trim_keeps_complete_parallel_turn_split_across_rows() -> None:
+    """A complete parallel turn (one assistant row per call, all results in)
+    is consistent and left intact."""
+    ctx = _ctx()
+    ctx.append(AgentContextItem(item_id="u1", role="user", content="question"))
+    ctx.append(AgentContextItem(item_id="a1", role="assistant", tool_calls=[_tool_call("call_1")]))
+    ctx.append(AgentContextItem(item_id="a2", role="assistant", tool_calls=[_tool_call("call_2")]))
+    ctx.append(AgentContextItem(item_id="t1", role="tool", content="r1", tool_call_id="call_1"))
+    ctx.append(AgentContextItem(item_id="t2", role="tool", content="r2", tool_call_id="call_2"))
+
+    assert ctx.trim_incomplete_tool_turn() == []
+    assert [i.item_id for i in ctx.items] == ["u1", "a1", "a2", "t1", "t2"]
+
+
+def test_trim_keeps_complete_parallel_turn_and_drops_incomplete_next() -> None:
+    """A completed split parallel turn is preserved; only the incomplete
+    following turn is trimmed."""
+    ctx = _ctx()
+    ctx.append(AgentContextItem(item_id="a1", role="assistant", tool_calls=[_tool_call("call_1")]))
+    ctx.append(AgentContextItem(item_id="a2", role="assistant", tool_calls=[_tool_call("call_2")]))
+    ctx.append(AgentContextItem(item_id="t1", role="tool", content="r1", tool_call_id="call_1"))
+    ctx.append(AgentContextItem(item_id="t2", role="tool", content="r2", tool_call_id="call_2"))
+    ctx.append(AgentContextItem(item_id="a3", role="assistant", tool_calls=[_tool_call("call_3")]))
+
+    removed = ctx.trim_incomplete_tool_turn()
+
+    assert [i.item_id for i in removed] == ["a3"]
+    assert [i.item_id for i in ctx.items] == ["a1", "a2", "t1", "t2"]
+
+
+@pytest.mark.asyncio
+async def test_compact_old_items_survives_compaction_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A summarization call that fails after its own retries must not take down
+    the run — the item stays uncompacted and is retried on the next pass."""
+
+    async def failing_compact(
+        *, client: AsyncOpenAI, compaction_model: ModelConfig, item: AgentContextItem
+    ) -> str:
+        del client, compaction_model, item
+        raise RuntimeError("compaction model unavailable")
+
+    monkeypatch.setattr(agent_context_module, "compact", failing_compact)
+
+    ctx = _ctx()
+    for i in range(4):
+        ctx.append(AgentContextItem(item_id=f"u{i}", role="user", content=f"msg {i}"))
+
+    await ctx.compact_old_items(_DUMMY_CLIENT)
+
+    assert all(not item.is_compacted for item in ctx.items)
+
+
+@pytest.mark.asyncio
+async def test_compact_old_items_tool_turn_atomic_on_partial_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If summarizing one item of a tool turn fails, the whole turn stays
+    uncompacted — never a compacted assistant summary paired with an
+    uncompacted ``role=tool`` row, which would render an invalid array."""
+
+    async def flaky_compact(
+        *, client: AsyncOpenAI, compaction_model: ModelConfig, item: AgentContextItem
+    ) -> str:
+        del client, compaction_model
+        if item.role == "tool":
+            raise RuntimeError("compaction model unavailable")
+        return f"SUMMARY({item.item_id})"
+
+    monkeypatch.setattr(agent_context_module, "compact", flaky_compact)
+
+    ctx = AgentContext(
+        items=[],
+        compaction_model=ModelConfig(name="claude-haiku-4-5"),
+        text_message_compaction_keep_last_messages=10,
+        tool_call_compaction_keep_last_turns=0,
+    )
+    ctx.append(AgentContextItem(item_id="a0", role="assistant", tool_calls=[_tool_call("c0")]))
+    ctx.append(
+        AgentContextItem(item_id="r0", role="tool", content="ok", tool_call_id="c0", name="x")
+    )
+
+    await ctx.compact_old_items(_DUMMY_CLIENT)
+
+    assert ctx.get_item("a0").is_compacted is False
+    assert ctx.get_item("r0").is_compacted is False
+
+
+@pytest.mark.asyncio
+async def test_compact_old_items_coalesces_split_parallel_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A parallel turn emitted as one assistant row per call counts as one turn
+    and compacts as one unit, so keep-last-turns can never compact half of it."""
+    ctx = AgentContext(
+        items=[],
+        compaction_model=ModelConfig(name="claude-haiku-4-5"),
+        text_message_compaction_keep_last_messages=10,
+        tool_call_compaction_keep_last_turns=1,
+    )
+    # Turn 1 (parallel, split across rows): a0[c0], a1[c1], r0, r1
+    ctx.append(AgentContextItem(item_id="a0", role="assistant", tool_calls=[_tool_call("c0")]))
+    ctx.append(AgentContextItem(item_id="a1", role="assistant", tool_calls=[_tool_call("c1")]))
+    ctx.append(
+        AgentContextItem(item_id="r0", role="tool", content="ok", tool_call_id="c0", name="x")
+    )
+    ctx.append(
+        AgentContextItem(item_id="r1", role="tool", content="ok", tool_call_id="c1", name="x")
+    )
+    # Turn 2 (parallel, split across rows): a2[c2], a3[c3], r2, r3
+    ctx.append(AgentContextItem(item_id="a2", role="assistant", tool_calls=[_tool_call("c2")]))
+    ctx.append(AgentContextItem(item_id="a3", role="assistant", tool_calls=[_tool_call("c3")]))
+    ctx.append(
+        AgentContextItem(item_id="r2", role="tool", content="ok", tool_call_id="c2", name="x")
+    )
+    ctx.append(
+        AgentContextItem(item_id="r3", role="tool", content="ok", tool_call_id="c3", name="x")
+    )
+
+    calls = _install_recording_compact(monkeypatch)
+    await ctx.compact_old_items(_DUMMY_CLIENT)
+
+    # 2 turns, keep_last_turns=1 → only the oldest turn compacted, in full.
+    assert {c.item_id for c in calls} == {"a0", "a1", "r0", "r1"}
+    assert [i.is_compacted for i in ctx.items] == [
+        True,
+        True,
+        True,
+        True,
+        False,
+        False,
+        False,
+        False,
+    ]

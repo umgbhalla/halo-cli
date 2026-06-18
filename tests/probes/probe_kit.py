@@ -151,8 +151,15 @@ def install_fake_runner(fake_runner: FakeRunner) -> Iterator[FakeRunner]:
     (root via ``main.py``, subagents via ``subagent_tool_factory.py``) hits
     the same FakeRunner. Yields the same ``fake_runner`` for convenience so
     callers can write ``with install_fake_runner(FakeRunner(...)) as f:``.
+
+    Also zeroes ``OpenAiAgentRunner``'s retry backoff for the block: probes
+    script failures deterministically, so real full-jitter sleeps would only
+    burn the ``run_with_fake`` timeout budget.
     """
-    with patch("agents.Runner.run_streamed", new=fake_runner.run_streamed):
+    with (
+        patch("agents.Runner.run_streamed", new=fake_runner.run_streamed),
+        patch("engine.agents.openai_agent_runner.backoff_delay", return_value=0.0),
+    ):
         yield fake_runner
 
 
@@ -248,11 +255,11 @@ def make_default_config(
     The model name is irrelevant when ``FakeRunner`` is installed via
     ``install_fake_runner`` (no real LLM call happens), so any string works.
 
-    LLM-retry backoff is disabled (``llm_retry_backoff_base_seconds=0``):
-    probes script failures deterministically, so sleeping between retries
-    only burns the ``run_with_fake`` timeout budget (a 10-failure exhaustion
-    probe would otherwise sleep minutes through full-jitter backoff and
-    surface as a bogus ``TimeoutError``)."""
+    ``install_fake_runner`` also zeroes the runner's retry backoff: probes
+    script failures deterministically, so sleeping between retries only burns
+    the ``run_with_fake`` timeout budget (a 10-failure exhaustion probe would
+    otherwise sleep minutes through full-jitter backoff and surface as a bogus
+    ``TimeoutError``)."""
     agent = AgentConfig(
         name="root",
         model=ModelConfig(name=model),
@@ -267,7 +274,6 @@ def make_default_config(
         maximum_parallel_subagents=maximum_parallel_subagents,
         text_message_compaction_keep_last_messages=text_message_compaction_keep_last_messages,
         tool_call_compaction_keep_last_turns=tool_call_compaction_keep_last_turns,
-        llm_retry_backoff_base_seconds=0.0,
     )
 
 

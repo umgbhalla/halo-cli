@@ -448,3 +448,86 @@ async def test_compact_old_items_survives_compaction_failure(
     await ctx.compact_old_items(_DUMMY_CLIENT)
 
     assert all(not item.is_compacted for item in ctx.items)
+
+
+@pytest.mark.asyncio
+async def test_compact_old_items_tool_turn_atomic_on_partial_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If summarizing one item of a tool turn fails, the whole turn stays
+    uncompacted — never a compacted assistant summary paired with an
+    uncompacted ``role=tool`` row, which would render an invalid array."""
+
+    async def flaky_compact(
+        *, client: AsyncOpenAI, compaction_model: ModelConfig, item: AgentContextItem
+    ) -> str:
+        del client, compaction_model
+        if item.role == "tool":
+            raise RuntimeError("compaction model unavailable")
+        return f"SUMMARY({item.item_id})"
+
+    monkeypatch.setattr(agent_context_module, "compact", flaky_compact)
+
+    ctx = AgentContext(
+        items=[],
+        compaction_model=ModelConfig(name="claude-haiku-4-5"),
+        text_message_compaction_keep_last_messages=10,
+        tool_call_compaction_keep_last_turns=0,
+    )
+    ctx.append(AgentContextItem(item_id="a0", role="assistant", tool_calls=[_tool_call("c0")]))
+    ctx.append(
+        AgentContextItem(item_id="r0", role="tool", content="ok", tool_call_id="c0", name="x")
+    )
+
+    await ctx.compact_old_items(_DUMMY_CLIENT)
+
+    assert ctx.get_item("a0").is_compacted is False
+    assert ctx.get_item("r0").is_compacted is False
+
+
+@pytest.mark.asyncio
+async def test_compact_old_items_coalesces_split_parallel_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A parallel turn emitted as one assistant row per call counts as one turn
+    and compacts as one unit, so keep-last-turns can never compact half of it."""
+    ctx = AgentContext(
+        items=[],
+        compaction_model=ModelConfig(name="claude-haiku-4-5"),
+        text_message_compaction_keep_last_messages=10,
+        tool_call_compaction_keep_last_turns=1,
+    )
+    # Turn 1 (parallel, split across rows): a0[c0], a1[c1], r0, r1
+    ctx.append(AgentContextItem(item_id="a0", role="assistant", tool_calls=[_tool_call("c0")]))
+    ctx.append(AgentContextItem(item_id="a1", role="assistant", tool_calls=[_tool_call("c1")]))
+    ctx.append(
+        AgentContextItem(item_id="r0", role="tool", content="ok", tool_call_id="c0", name="x")
+    )
+    ctx.append(
+        AgentContextItem(item_id="r1", role="tool", content="ok", tool_call_id="c1", name="x")
+    )
+    # Turn 2 (parallel, split across rows): a2[c2], a3[c3], r2, r3
+    ctx.append(AgentContextItem(item_id="a2", role="assistant", tool_calls=[_tool_call("c2")]))
+    ctx.append(AgentContextItem(item_id="a3", role="assistant", tool_calls=[_tool_call("c3")]))
+    ctx.append(
+        AgentContextItem(item_id="r2", role="tool", content="ok", tool_call_id="c2", name="x")
+    )
+    ctx.append(
+        AgentContextItem(item_id="r3", role="tool", content="ok", tool_call_id="c3", name="x")
+    )
+
+    calls = _install_recording_compact(monkeypatch)
+    await ctx.compact_old_items(_DUMMY_CLIENT)
+
+    # 2 turns, keep_last_turns=1 → only the oldest turn compacted, in full.
+    assert {c.item_id for c in calls} == {"a0", "a1", "r0", "r1"}
+    assert [i.is_compacted for i in ctx.items] == [
+        True,
+        True,
+        True,
+        True,
+        False,
+        False,
+        False,
+        False,
+    ]

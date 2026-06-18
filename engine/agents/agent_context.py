@@ -163,29 +163,36 @@ class AgentContext:
     async def compact_old_items(self, client: AsyncOpenAI) -> None:
         """Compact eligible older items in place using two independent keep-last thresholds.
 
-        Text messages and tool turns are tracked separately; tool turns (assistant
-        tool_calls + matching results) are always compacted together so the rendered
-        message array stays valid for the LLM API. System messages are never touched.
+        Text messages compact individually; a tool turn (its assistant tool_calls
+        rows plus matching results) is one atomic unit so the rendered array never
+        pairs a compacted summary with an uncompacted ``role=tool`` row. System
+        messages are never touched.
         """
-        text_positions: list[int] = []
+        text_positions = [
+            idx
+            for idx, item in enumerate(self.items)
+            if not item.is_compacted and item.role != "system" and not _is_tool_related(item)
+        ]
         tool_groups = _build_tool_groups(self.items)
 
-        for idx, item in enumerate(self.items):
-            if item.is_compacted or item.role == "system":
-                continue
-            if not _is_tool_related(item):
-                text_positions.append(idx)
-
-        eligible: list[int] = []
+        units: list[list[int]] = []
         if len(text_positions) > self.text_message_compaction_keep_last_messages:
             cutoff = len(text_positions) - self.text_message_compaction_keep_last_messages
-            eligible.extend(text_positions[:cutoff])
+            units.extend([pos] for pos in text_positions[:cutoff])
         if len(tool_groups) > self.tool_call_compaction_keep_last_turns:
             cutoff = len(tool_groups) - self.tool_call_compaction_keep_last_turns
-            for group in tool_groups[:cutoff]:
-                eligible.extend(group)
+            units.extend(tool_groups[:cutoff])
 
-        for idx in sorted(set(eligible)):
+        for unit in units:
+            await self._compact_unit(unit, client)
+
+    async def _compact_unit(self, indices: list[int], client: AsyncOpenAI) -> None:
+        """Summarize every item in one compaction unit, committing only if all
+        succeed. A tool turn is a single unit, so it never renders half-compacted;
+        any failed summary leaves the whole unit uncompacted for the next pass.
+        """
+        summaries: list[tuple[int, AgentContextItem, str]] = []
+        for idx in indices:
             item = self.items[idx]
             try:
                 summary = await compact(
@@ -193,14 +200,17 @@ class AgentContext:
                 )
             except Exception:
                 # Compaction is an optimization — a failed summarization call
-                # (after its own retries) must never take down the run. Leave
-                # the item uncompacted; the next turn's pass retries it.
+                # (after its own retries) must never take down the run, and must
+                # not partially compact a tool turn. Leave the whole unit
+                # uncompacted; the next turn's pass retries it.
                 logger.error(
-                    "Compaction failed for item %s; leaving uncompacted",
+                    "Compaction failed for unit containing item %s; leaving unit uncompacted",
                     item.item_id,
                     exc_info=True,
                 )
-                continue
+                return
+            summaries.append((idx, item, summary))
+        for idx, item, summary in summaries:
             self.items[idx] = item.model_copy(
                 update={"is_compacted": True, "compaction_summary": summary}
             )
@@ -217,33 +227,44 @@ def _is_tool_related(item: AgentContextItem) -> bool:
 
 
 def _build_tool_groups(items: list[AgentContextItem]) -> list[list[int]]:
-    """Group tool-related items into conversational turns.
+    """Group tool-related items into conversational turns (atomic compaction units).
 
-    A turn = one assistant message that emitted tool_calls, paired with the
-    role=tool result messages whose tool_call_id matches one of those calls.
+    A turn = a maximal run of consecutive assistant ``tool_calls`` rows (the
+    mapper emits one per call, so a parallel turn spans several) plus the
+    ``role=tool`` results that follow them. Grouping the whole contiguous block
+    together is what lets compaction stay all-or-nothing: the keep-last cutoff
+    can never split a parallel turn, and a compacted turn renders as a valid
+    block of summaries.
 
     The returned list preserves turn order (oldest first) and contains item
-    indices into ``items``. Already-compacted items are skipped so a second
-    pass cannot re-compact them or accidentally pull a still-uncompacted
-    result into a turn whose assistant has already been collapsed.
-
-    A tool result whose matching assistant tool_call is not present in the
-    context (or has already been compacted) is dropped from grouping —
+    indices into ``items``. Already-compacted items are skipped so a second pass
+    cannot re-compact them. A tool result with no preceding tool-call row in its
+    block (its call is absent or already compacted) is dropped from grouping —
     standalone, it cannot form a coherent turn for OpenAI's API anyway.
     """
     groups: list[list[int]] = []
-    call_id_to_group: dict[str, int] = {}
+    current: list[int] = []
+    awaiting_results = False  # have this block's results started arriving?
     for idx, item in enumerate(items):
         if item.is_compacted or item.role == "system":
             continue
         if item.role == "assistant" and item.tool_calls:
-            groups.append([idx])
-            for tc in item.tool_calls:
-                call_id_to_group[tc.id] = len(groups) - 1
+            if awaiting_results:
+                groups.append(current)
+                current = []
+                awaiting_results = False
+            current.append(idx)
         elif item.role == "tool" and item.tool_call_id is not None:
-            group_index = call_id_to_group.get(item.tool_call_id)
-            if group_index is not None:
-                groups[group_index].append(idx)
+            if current:
+                current.append(idx)
+                awaiting_results = True
+        else:
+            if current:
+                groups.append(current)
+                current = []
+                awaiting_results = False
+    if current:
+        groups.append(current)
     return groups
 
 

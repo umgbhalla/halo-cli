@@ -11,28 +11,42 @@ import {
 } from "~/lib/ui";
 
 export function ImportDataScreen({
+  className,
+  compact = false,
+  hideHeader = false,
   onConnectLocalAgent,
   onImportJsonl,
   onImportLangfuse,
   onImportPhoenix,
 }: {
+  className?: string;
+  compact?: boolean;
+  hideHeader?: boolean;
   onConnectLocalAgent: () => void;
   onImportJsonl: () => void;
   onImportLangfuse: () => void;
   onImportPhoenix: () => void;
 }) {
   return (
-    <div className="flex h-full min-h-[calc(100vh-3.5rem)] items-center justify-center overflow-auto p-8">
+    <div
+      className={cn(
+        "flex h-full min-h-[calc(100vh-3.5rem)] items-center justify-center overflow-auto p-8",
+        compact && "h-auto min-h-0 overflow-visible p-0",
+        className,
+      )}
+    >
       <div className="w-full max-w-3xl">
-        <div className="mb-8">
-          <h1 className="text-3xl font-medium tracking-normal">
-            Import Agent Traces
-          </h1>
-          <p className="mt-3 max-w-xl text-base text-muted-foreground">
-            Import existing data from a provider, upload a file, or connect a
-            live agent.
-          </p>
-        </div>
+        {hideHeader ? null : (
+          <div className="mb-8">
+            <h1 className="text-3xl font-medium tracking-normal">
+              Import Agent Traces
+            </h1>
+            <p className="mt-3 max-w-xl text-base text-muted-foreground">
+              Import existing data from a provider, upload a file, or connect a
+              live agent.
+            </p>
+          </div>
+        )}
         <div className="grid gap-4 lg:grid-cols-2">
           <ImportDataActionCard
             description="Bring historical traces from a Langfuse project into this local HALO timeline."

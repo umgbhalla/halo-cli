@@ -1,9 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { createDatabase, ensureSchema } from "../src/server/db/client";
+import {
+  demoTracesCacheRoot,
+  downloadDemoTraces,
+  huggingFaceDemoTracesUrl,
+} from "../src/server/fileimport/demoTraces";
 import { createFileImportService } from "../src/server/fileimport/importQueue";
 import {
   jsonlSpansToOtlp,
@@ -192,6 +197,91 @@ describe("JSONL parser", () => {
       ?.spans?.[0];
     expect(span?.startTimeUnixNano).toBe("1779918830930000000");
     expect(span?.endTimeUnixNano).toBe("1779918838757746470");
+  });
+});
+
+describe("Demo traces download helper", () => {
+  test("builds deterministic allowlisted Hugging Face resolve URLs", () => {
+    expect(huggingFaceDemoTracesUrl("halo_search_agent_1000_traces.jsonl")).toBe(
+      "https://huggingface.co/datasets/inference-net/SearchAgentDemoTraces/resolve/6dd8e0422939749a5e839a6e1bda4291e4ca5e56/halo_search_agent_1000_traces.jsonl",
+    );
+  });
+
+  test("places demo cache beside the local database", () => {
+    expect(demoTracesCacheRoot("/tmp/halo/data/halo.sqlite")).toBe(
+      "/tmp/halo/data/cache/demo-traces",
+    );
+    expect(demoTracesCacheRoot(":memory:")).toContain("halo-demo-traces-cache");
+  });
+
+  test("downloads an allowlisted file and reuses the cache", async () => {
+    const cacheRoot = mkdtempSync(join(tmpdir(), "halo-demo-cache-"));
+    tempDirs.push(cacheRoot);
+    const body = Buffer.from(`${JSON.stringify(makeSpanRecord())}\n`);
+    const progress: number[] = [];
+    const calls: string[] = [];
+
+    const result = await downloadDemoTraces({
+      cacheRoot,
+      fetcher: async (url) => {
+        calls.push(url);
+        return new Response(body, {
+          headers: { "content-length": String(body.byteLength) },
+          status: 200,
+        });
+      },
+      onProgress: ({ downloadedBytes }) => progress.push(downloadedBytes),
+    });
+
+    expect(result.cached).toBe(false);
+    expect(result.downloadedBytes).toBe(body.byteLength);
+    expect(result.totalBytes).toBe(body.byteLength);
+    expect(calls).toEqual([
+      huggingFaceDemoTracesUrl("halo_search_agent_1000_traces.jsonl"),
+    ]);
+    expect(Buffer.compare(readFileSync(result.filePath), body)).toBe(0);
+    expect(progress.at(-1)).toBe(body.byteLength);
+
+    const cached = await downloadDemoTraces({
+      cacheRoot,
+      fetcher: async () => {
+        throw new Error("network should not be used");
+      },
+    });
+    expect(cached.cached).toBe(true);
+    expect(cached.filePath).toBe(result.filePath);
+    expect(cached.fileSizeBytes).toBe(body.byteLength);
+  });
+
+  test("reports a missing allowlisted dataset file", async () => {
+    const cacheRoot = mkdtempSync(join(tmpdir(), "halo-demo-cache-"));
+    tempDirs.push(cacheRoot);
+    const calls: string[] = [];
+
+    await expect(
+      downloadDemoTraces({
+        cacheRoot,
+        fetcher: async (url) => {
+          calls.push(url);
+          return new Response("missing", { status: 404 });
+        },
+      }),
+    ).rejects.toThrow("HTTP 404");
+    expect(calls).toEqual([
+      huggingFaceDemoTracesUrl("halo_search_agent_1000_traces.jsonl"),
+    ]);
+  });
+
+  test("reports non-200 download failures without network dependency", async () => {
+    const cacheRoot = mkdtempSync(join(tmpdir(), "halo-demo-cache-"));
+    tempDirs.push(cacheRoot);
+
+    await expect(
+      downloadDemoTraces({
+        cacheRoot,
+        fetcher: async () => new Response("auth required", { status: 401 }),
+      }),
+    ).rejects.toThrow("HTTP 401");
   });
 });
 

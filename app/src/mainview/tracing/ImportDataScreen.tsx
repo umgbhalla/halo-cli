@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Activity, ArrowRight, FileUp } from "lucide-react";
+import { Activity, ArrowRight, BookOpen, Database, FileUp } from "lucide-react";
 
 import {
   Badge,
@@ -18,6 +18,8 @@ export function ImportDataScreen({
   onImportJsonl,
   onImportLangfuse,
   onImportPhoenix,
+  onLoadDemoTraces,
+  onReadDocumentation,
 }: {
   className?: string;
   compact?: boolean;
@@ -26,16 +28,18 @@ export function ImportDataScreen({
   onImportJsonl: () => void;
   onImportLangfuse: () => void;
   onImportPhoenix: () => void;
+  onLoadDemoTraces: () => void;
+  onReadDocumentation: () => void;
 }) {
   return (
     <div
       className={cn(
-        "flex h-full min-h-[calc(100vh-3.5rem)] items-center justify-center overflow-auto p-8",
-        compact && "h-auto min-h-0 overflow-visible p-0",
+        "flex h-full min-h-[calc(100vh-3.5rem)] items-center justify-center overflow-auto p-8 -translate-y-[60px]",
+        compact && "h-auto min-h-0 overflow-visible p-0 translate-y-0",
         className,
       )}
     >
-      <div className="w-full max-w-3xl">
+      <div className="w-full max-w-4xl">
         {hideHeader ? null : (
           <div className="mb-8">
             <h1 className="text-3xl font-medium tracking-normal">
@@ -47,13 +51,13 @@ export function ImportDataScreen({
             </p>
           </div>
         )}
-        <div className="grid gap-4 lg:grid-cols-2">
+        <div className="grid grid-cols-3 gap-3">
           <ImportDataActionCard
             description="Bring historical traces from a Langfuse project into this local HALO timeline."
             estimatedTime="Est time: 2-5 minutes"
             icon={
-              <span className="grid h-11 w-11 place-items-center rounded-xl bg-background-muted">
-                <LangfuseLogo className="h-7 w-7" />
+              <span className="grid h-10 w-10 place-items-center rounded-xl bg-background-muted">
+                <LangfuseLogo className="h-6 w-6" />
               </span>
             }
             onClick={onImportLangfuse}
@@ -63,8 +67,8 @@ export function ImportDataScreen({
             description="Bring historical traces from an Arize Phoenix project into this local HALO timeline."
             estimatedTime="Est time: 2-5 minutes"
             icon={
-              <span className="grid h-11 w-11 place-items-center rounded-xl bg-background-muted">
-                <PhoenixLogo className="h-7 w-7" />
+              <span className="grid h-10 w-10 place-items-center rounded-xl bg-background-muted">
+                <PhoenixLogo className="h-6 w-6" />
               </span>
             }
             onClick={onImportPhoenix}
@@ -74,7 +78,7 @@ export function ImportDataScreen({
             description="Upload a JSONL trace export. One span per line, the format HALO and Catalyst exports use."
             estimatedTime="Est time: 1-2 minutes"
             icon={
-              <span className="grid h-11 w-11 place-items-center rounded-xl bg-detail-brand/10 text-detail-brand">
+              <span className="grid h-10 w-10 place-items-center rounded-xl bg-detail-brand/10 text-detail-brand">
                 <FileUp className="h-5 w-5" />
               </span>
             }
@@ -85,12 +89,35 @@ export function ImportDataScreen({
             description="Point a Catalyst or OpenTelemetry JSON exporter at HALO and watch traces stream live."
             estimatedTime="Est time: 2-5 minutes"
             icon={
-              <span className="grid h-11 w-11 place-items-center rounded-xl bg-detail-brand/10 text-detail-brand">
+              <span className="grid h-10 w-10 place-items-center rounded-xl bg-detail-brand/10 text-detail-brand">
                 <Activity className="h-5 w-5" />
               </span>
             }
             onClick={onConnectLocalAgent}
             title="Connect Local Agent"
+          />
+          <ImportDataActionCard
+            badge="Demo"
+            description="Load sample agent traces into this workspace so you can explore HALO with real data."
+            estimatedTime="Est time: under 1 minute"
+            icon={
+              <span className="grid h-10 w-10 place-items-center rounded-xl bg-detail-brand/10 text-detail-brand">
+                <Database className="h-5 w-5" />
+              </span>
+            }
+            onClick={onLoadDemoTraces}
+            title="Load Demo Traces"
+          />
+          <ImportDataActionCard
+            description="Open the HALO documentation for setup guides, import formats, and tracing examples."
+            estimatedTime="Opens in your browser"
+            icon={
+              <span className="grid h-10 w-10 place-items-center rounded-xl bg-detail-brand/10 text-detail-brand">
+                <BookOpen className="h-5 w-5" />
+              </span>
+            }
+            onClick={onReadDocumentation}
+            title="Read Documentation"
           />
         </div>
       </div>
@@ -164,7 +191,7 @@ function ImportDataActionCard({
   return (
     <button
       className={cn(
-        "group flex min-h-48 w-full flex-col rounded-[18px] border border-border/70 bg-card p-5 text-left transition hover:border-border hover:bg-card-hover/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "group flex min-h-40 w-full flex-col rounded-2xl border border-border/70 bg-card p-4 text-left transition hover:border-border hover:bg-card-hover/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         highlighted && "border-detail-brand/30 ring-1 ring-detail-brand/20",
       )}
       onClick={onClick}
@@ -178,14 +205,14 @@ function ImportDataActionCard({
           </Badge>
         ) : null}
       </div>
-      <h2 className="mt-5 flex items-center gap-1.5 text-xl font-medium tracking-normal">
+      <h2 className="mt-4 flex items-center gap-1.5 text-lg font-medium tracking-normal">
         {title}
         <ArrowRight className="h-4 w-4 -translate-x-1 text-muted-foreground opacity-0 transition group-hover:translate-x-0 group-hover:opacity-100" />
       </h2>
-      <p className="mt-2 max-w-xl text-base leading-7 text-muted-foreground">
+      <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">
         {description}
       </p>
-      <p className="mt-auto pt-5 text-sm font-medium text-muted-foreground">
+      <p className="mt-auto pt-4 text-xs font-medium text-muted-foreground">
         {estimatedTime}
       </p>
     </button>

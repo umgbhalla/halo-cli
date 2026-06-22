@@ -468,12 +468,14 @@ export function RunDetailPage({ runId }: { runId: string }) {
 
           <FiltersSection filters={(run.filters ?? {}) as TelemetryFilters} />
 
-          <RailSection icon={FileBox} title="Artifacts">
-            <div className="space-y-2 text-xs text-muted-foreground">
-              <CopyLine label="Export" value={run.exportPath} />
-              <CopyLine label="Result" value={run.resultPath} />
-            </div>
-          </RailSection>
+          {run.exportPath || run.resultPath ? (
+            <RailSection icon={FileBox} title="Artifacts">
+              <div className="space-y-2 text-xs text-muted-foreground">
+                <CopyLine label="Export" value={run.exportPath} />
+                <CopyLine label="Result" value={run.resultPath} />
+              </div>
+            </RailSection>
+          ) : null}
         </aside>
       </div>
 

@@ -20,6 +20,7 @@ import {
 import { trpc } from "~/trpc";
 import { WorkspaceNav } from "~/workspace/WorkspaceNav";
 import {
+  openExternalUrl,
   TRACE_PAGE_COMMAND_EVENT,
 } from "~/desktop/desktopBridge";
 import { AppHeader } from "~/components/AppHeader";
@@ -28,6 +29,7 @@ import { ImportDataScreen, LocalAgentSetupDialog } from "./ImportDataScreen";
 import { LangfuseImportDialog } from "./langfuse/LangfuseImportDialog";
 import { PhoenixImportDialog } from "./phoenix/PhoenixImportDialog";
 import { FileImportDialog } from "./fileimport/FileImportDialog";
+import { DemoTracesImportDialog } from "./DemoTracesImportDialog";
 import type {
   SessionSortKey,
   SessionSummary,
@@ -45,6 +47,7 @@ import { SessionList } from "./SessionList";
 import { TelemetryStatStrip } from "./TelemetryStatStrip";
 import { TraceList } from "./TraceList";
 import { TelemetryDetailSheet } from "./detail/TelemetryDetailSheet";
+import { APP_DOCS_URL } from "../../desktop/commands";
 import {
   TELEMETRY_FACET_IDS,
   type ScopeFilter,
@@ -100,6 +103,7 @@ export function TraceMonitorPage({
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [phoenixDialogOpen, setPhoenixDialogOpen] = useState(false);
   const [fileDialogOpen, setFileDialogOpen] = useState(false);
+  const [demoDialogOpen, setDemoDialogOpen] = useState(false);
   const [localAgentSetupOpen, setLocalAgentSetupOpen] = useState(false);
   const [runConfigOpen, setRunConfigOpen] = useState(false);
   const [runConfigInitialValues, setRunConfigInitialValues] = useState<
@@ -439,6 +443,9 @@ export function TraceMonitorPage({
     void sessionFacetsQuery.refetch();
     void (activeSearch ? sessionSearchQuery.refetch() : sessionListQuery.refetch());
   };
+  const handleReadDocumentation = useCallback(() => {
+    void openExternalUrl(APP_DOCS_URL);
+  }, []);
 
   const handleFollowLatestChange = (enabled: boolean) => {
     if (!enabled) {
@@ -582,6 +589,8 @@ export function TraceMonitorPage({
               onImportJsonl={() => setFileDialogOpen(true)}
               onImportLangfuse={() => setImportDialogOpen(true)}
               onImportPhoenix={() => setPhoenixDialogOpen(true)}
+              onLoadDemoTraces={() => setDemoDialogOpen(true)}
+              onReadDocumentation={handleReadDocumentation}
             />
           ) : (
             <div className="flex h-full min-h-0 flex-col">
@@ -680,6 +689,11 @@ export function TraceMonitorPage({
         onImported={refresh}
         onOpenChange={setFileDialogOpen}
         open={fileDialogOpen}
+      />
+      <DemoTracesImportDialog
+        onImported={refresh}
+        onOpenChange={setDemoDialogOpen}
+        open={demoDialogOpen}
       />
       <LocalAgentSetupDialog
         envLine={catalystEnvLine}

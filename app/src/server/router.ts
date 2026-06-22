@@ -1,4 +1,5 @@
 import { TRPCError, initTRPC, tracked } from "@trpc/server";
+import { unlink } from "node:fs/promises";
 import { z } from "zod";
 import type { DatabaseHandle } from "./db/client";
 import { getHaloEngineStatus, installOrUpdateHaloEngine, testHaloProvider } from "./halo/engine";
@@ -34,6 +35,11 @@ import {
 import type { PhoenixImportService } from "./phoenix/importQueue";
 import { previewJsonlFile } from "./fileimport/parser";
 import type { FileImportService } from "./fileimport/importQueue";
+import {
+  DEMO_TRACES_DATASET,
+  demoTracesCacheRoot,
+  downloadDemoTraces,
+} from "./fileimport/demoTraces";
 import {
   getFileImportJob,
   listFileImportJobs,
@@ -94,7 +100,6 @@ const t = initTRPC.context<TRPCContext>().create();
 const observationKindSchema = z.enum(OBSERVATION_KINDS);
 const traceSourceSchema = z.enum(TRACE_SOURCES);
 const sortOrderSchema = z.enum(["asc", "desc"]);
-
 const filtersSchema = z.object({
   startDate: z.coerce.date().optional(),
   endDate: z.coerce.date().optional(),
@@ -883,6 +888,67 @@ export const appRouter = t.router({
         .query(({ ctx, input }) =>
           listFileImportJobs(ctx.database.sqlite, input?.limit ?? 20),
         ),
+
+      loadDemo: t.procedure.mutation(async ({ ctx }) => {
+        const service = requireFileImportService(ctx);
+        let downloaded: Awaited<ReturnType<typeof downloadDemoTraces>>;
+        try {
+          downloaded = await downloadDemoTraces({
+            cacheRoot: demoTracesCacheRoot(ctx.database.path),
+          });
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message:
+              error instanceof Error
+                ? error.message
+                : "Could not download the demo traces.",
+          });
+        }
+
+        let preview: Awaited<ReturnType<typeof previewJsonlFile>>;
+        try {
+          preview = await previewJsonlFile(downloaded.filePath);
+        } catch (error) {
+          if (!downloaded.cached) {
+            await unlink(downloaded.filePath).catch(() => undefined);
+          }
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message:
+              error instanceof Error
+                ? `The downloaded demo traces could not be parsed: ${error.message}`
+                : "The downloaded demo traces could not be parsed.",
+          });
+        }
+
+        try {
+          const job = await service.start({ filePath: downloaded.filePath });
+          return {
+            cached: downloaded.cached,
+            dataset: {
+              datasetUrl: DEMO_TRACES_DATASET.datasetUrl,
+              revision: downloaded.revision,
+              sourceUrl: downloaded.sourceUrl,
+            },
+            downloadedBytes: downloaded.downloadedBytes,
+            fileName: downloaded.fileName,
+            filePath: downloaded.filePath,
+            fileSizeBytes: downloaded.fileSizeBytes,
+            job,
+            preview,
+            totalBytes: downloaded.totalBytes,
+          };
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message:
+              error instanceof Error
+                ? error.message
+                : "Could not queue the demo traces import.",
+          });
+        }
+      }),
 
       preview: t.procedure
         .input(z.object({ filePath: z.string().min(1) }))

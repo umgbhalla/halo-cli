@@ -121,7 +121,7 @@ function WorkspaceResourceLinks() {
       <WorkspaceResourceButton
         href={APP_CATALYST_URL}
         icon={<SparklesMark className="h-4 w-4" />}
-        label="Try Catalyst - $250 Free"
+        label="Upgrade - $250 Free"
       />
     </div>
   );

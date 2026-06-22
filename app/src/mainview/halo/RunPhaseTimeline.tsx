@@ -83,8 +83,6 @@ function derivePhases(run: HaloRunView): Phase[] {
   const terminalOk = run.status === "completed" || run.status === "incomplete";
   const terminalBad = ["failed", "cancelled", "interrupted"].includes(run.status);
 
-  const exportDetail =
-    run.spanCount > 0 ? `${run.spanCount} spans` : undefined;
   const doneLabel = terminalBad
     ? run.status === "cancelled"
       ? "Cancelled"
@@ -114,7 +112,7 @@ function derivePhases(run: HaloRunView): Phase[] {
 
   return [
     { label: "Queued", state: stateFor(0) },
-    { detail: exportDetail, label: "Export", state: stateFor(1) },
+    { label: "Export", state: stateFor(1) },
     { label: "Analysis", state: stateFor(2) },
     { label: doneLabel, state: stateFor(3) },
   ];

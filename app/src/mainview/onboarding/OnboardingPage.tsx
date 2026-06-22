@@ -5,7 +5,10 @@ import { ArrowLeft, ArrowRight } from "lucide-react";
 
 import { Button, cn } from "~/lib/ui";
 import { trpc } from "~/trpc";
+import { openExternalUrl } from "~/desktop/desktopBridge";
+import { APP_DOCS_URL } from "../../desktop/commands";
 import { ImportDataScreen, LocalAgentSetupDialog } from "~/tracing/ImportDataScreen";
+import { DemoTracesImportDialog } from "~/tracing/DemoTracesImportDialog";
 import { FileImportDialog } from "~/tracing/fileimport/FileImportDialog";
 import { LangfuseImportDialog } from "~/tracing/langfuse/LangfuseImportDialog";
 import { PhoenixImportDialog } from "~/tracing/phoenix/PhoenixImportDialog";
@@ -144,6 +147,7 @@ function ImportStep({
   const [langfuseDialogOpen, setLangfuseDialogOpen] = useState(false);
   const [phoenixDialogOpen, setPhoenixDialogOpen] = useState(false);
   const [fileDialogOpen, setFileDialogOpen] = useState(false);
+  const [demoDialogOpen, setDemoDialogOpen] = useState(false);
   const [localAgentSetupOpen, setLocalAgentSetupOpen] = useState(false);
   const utils = trpc.useUtils();
   const infoQuery = trpc.telemetry.info.useQuery();
@@ -160,6 +164,9 @@ function ImportStep({
     void utils.sessions.list.invalidate();
     void utils.sessions.search.invalidate();
   }, [infoQuery, utils]);
+  const handleReadDocumentation = useCallback(() => {
+    void openExternalUrl(APP_DOCS_URL);
+  }, []);
 
   trpc.live.workspace.useSubscription(undefined, {
     onData() {
@@ -186,6 +193,8 @@ function ImportStep({
         onImportJsonl={() => setFileDialogOpen(true)}
         onImportLangfuse={() => setLangfuseDialogOpen(true)}
         onImportPhoenix={() => setPhoenixDialogOpen(true)}
+        onLoadDemoTraces={() => setDemoDialogOpen(true)}
+        onReadDocumentation={handleReadDocumentation}
       />
 
       <LangfuseImportDialog
@@ -202,6 +211,11 @@ function ImportStep({
         onImported={refreshTelemetry}
         onOpenChange={setFileDialogOpen}
         open={fileDialogOpen}
+      />
+      <DemoTracesImportDialog
+        onImported={refreshTelemetry}
+        onOpenChange={setDemoDialogOpen}
+        open={demoDialogOpen}
       />
       <LocalAgentSetupDialog
         envLine={catalystEnvLine}

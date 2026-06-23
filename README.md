@@ -38,6 +38,10 @@
   <a href="#contributing">Contributing</a>
 </p>
 
+<p align="center">
+  <video src="./assets/halo-social.mp4" controls muted playsinline width="100%"></video>
+</p>
+
 ## What is this?
 
 Note: If you're looking for a hosted, plug-and-play version of HALO, please sign up for [inference.net](https://inference.net).
@@ -52,15 +56,13 @@ HALO (Hierarchical Agent Loop Optimization) is a methodology for building recurs
 
 ## Desktop App
 
-The HALO desktop app lives in [`app/`](app). It is an ElectroBun/Bun/React app for collecting local OpenTelemetry traces, importing Langfuse history, grouping traces into sessions, and running local HALO analysis over trace/session groups.
+Install the HALO desktop app with:
 
 ```bash
-cd app
-bun install
-bun run dev
+curl -fsSL https://inference.net/halo/install.sh | sh
 ```
 
-Release and installer details are documented in [`app/docs/distribution.md`](app/docs/distribution.md).
+The installer downloads the latest release for your platform and sets up the desktop app. macOS uses a signed, notarized DMG. You can also install directly from the [GitHub releases page](https://github.com/context-labs/halo/releases).
 
 ## HALO Loop
 

@@ -8,7 +8,7 @@
 
 <h1 align="center">
   <br>
-  <a href="https://github.com/context-labs/halo"><img src="./assets/halo-icon.png" alt="😇" width="150" style="border-radius:16px;"></a>
+  <a href="https://github.com/context-labs/halo"><img src="./assets/halo-icon.png" alt="😇" width="150"></a>
    <br>
   HALO
   <br>

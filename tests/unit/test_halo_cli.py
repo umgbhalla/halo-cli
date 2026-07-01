@@ -13,7 +13,7 @@ from halo_cli.main import _make_config, _parse_headers, cli
 
 
 def test_help_exposes_provider_and_model_flags_without_no_telemetry() -> None:
-    result = CliRunner().invoke(cli, ["--help"])
+    result = CliRunner().invoke(cli, ["analyze", "--help"])
 
     assert result.exit_code == 0
     assert "--base-url" in result.output
@@ -134,7 +134,7 @@ def test_cli_leaves_provider_fields_unset_for_openai_env_fallback(
     monkeypatch.setenv("OPENAI_BASE_URL", "https://env.example/v1")
     monkeypatch.setattr(cli_main, "_stream", capture_stream)
 
-    result = CliRunner().invoke(cli, [str(trace_path), "--prompt", "hi"])
+    result = CliRunner().invoke(cli, ["analyze", str(trace_path), "--prompt", "hi"])
 
     assert result.exit_code == 0
     assert captured["trace_path"] == trace_path
@@ -167,7 +167,7 @@ def test_cli_threads_repo_path_into_config(
     monkeypatch.setattr(cli_main, "_stream", capture_stream)
 
     result = CliRunner().invoke(
-        cli, [str(trace_path), "--prompt", "hi", "--repo-path", str(repo_dir)]
+        cli, ["analyze", str(trace_path), "--prompt", "hi", "--repo-path", str(repo_dir)]
     )
 
     assert result.exit_code == 0
@@ -183,7 +183,7 @@ def test_cli_rejects_nonexistent_repo_path(
     monkeypatch.setenv("OPENAI_API_KEY", "sk-env")
 
     result = CliRunner().invoke(
-        cli, [str(trace_path), "--prompt", "hi", "--repo-path", str(tmp_path / "nope")]
+        cli, ["analyze", str(trace_path), "--prompt", "hi", "--repo-path", str(tmp_path / "nope")]
     )
 
     assert result.exit_code != 0
@@ -201,7 +201,7 @@ def test_cli_repo_path_requires_ripgrep(
     monkeypatch.setattr(cli_main, "find_ripgrep", lambda: None)
 
     result = CliRunner().invoke(
-        cli, [str(trace_path), "--prompt", "hi", "--repo-path", str(repo_dir)]
+        cli, ["analyze", str(trace_path), "--prompt", "hi", "--repo-path", str(repo_dir)]
     )
 
     assert result.exit_code == 1

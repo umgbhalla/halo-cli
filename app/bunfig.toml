@@ -1,5 +1,0 @@
-# Scope test discovery to ./tests — the HALO engine install clones this whole
-# repo into data/halo-engine/, and without a root bun test would run that
-# copy's suite too (double execution + port/db collisions).
-[test]
-root = "tests"

@@ -1,2 +1,0 @@
-/* Custom variants for theme system */
-@custom-variant dark (&:is(.dark, .dark *));

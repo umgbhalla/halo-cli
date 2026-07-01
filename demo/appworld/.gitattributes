@@ -1,2 +1,0 @@
-src/appworld/.source/*.bundle filter=lfs diff=lfs merge=lfs -text
-generate/.source/*.bundle filter=lfs diff=lfs merge=lfs -text

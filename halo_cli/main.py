@@ -1,8 +1,9 @@
-"""`halo` CLI: stream the HALO engine over a JSONL trace file."""
+"""`halo` CLI: analyze traces, backfill from Langfuse, and run detached jobs."""
 
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from pathlib import Path
 from typing import get_args
@@ -20,20 +21,24 @@ from engine.model_config import ModelConfig, ReasoningEffort
 from engine.model_provider_config import ModelProviderConfig
 from engine.models.engine_output import AgentOutputItem, AgentTextDelta
 from engine.models.messages import AgentMessage
+from halo_cli._env import load_dotenv
+from halo_cli.backfill import backfill_command, backfill_project
+from halo_cli.convert import convert as convert_traces
+from halo_cli.convert import convert_command
+from halo_cli.jobs import detach_if_requested, jobs_app
 
 console = Console()
 
 REASONING_EFFORT_CHOICES: tuple[str, ...] = get_args(ReasoningEffort)
 _REASONING_EFFORT_ADAPTER: TypeAdapter[ReasoningEffort | None] = TypeAdapter(ReasoningEffort | None)
 
+DEFAULT_PROMPT = (
+    "Analyze these traces. Identify the most important failures, latency "
+    "bottlenecks, confusing tool behavior, and concrete improvements for the developer."
+)
+
 
 def _parse_reasoning_effort(value: str | None) -> ReasoningEffort | None:
-    """Validate the CLI string against the canonical ``ReasoningEffort`` literal.
-
-    Pydantic owns the list of valid values; this just routes its error
-    through typer's CLI surface so users see ``Invalid value for
-    '--reasoning-effort'`` instead of a stack trace.
-    """
     try:
         return _REASONING_EFFORT_ADAPTER.validate_python(value)
     except ValidationError as exc:
@@ -45,10 +50,7 @@ def _parse_headers(values: list[str] | None) -> dict[str, str] | None:
     for raw in values or []:
         name, separator, value = raw.partition(":")
         if separator == "" or name.strip() == "":
-            raise typer.BadParameter(
-                "Expected NAME: VALUE.",
-                param_hint="--header",
-            )
+            raise typer.BadParameter("Expected NAME: VALUE.", param_hint="--header")
         headers[name.strip()] = value.strip()
     return headers or None
 
@@ -80,14 +82,6 @@ def _make_config(
             reasoning_effort=reasoning_effort,
         )
 
-    # One ModelConfig per role so each is independently tunable. Synthesis
-    # and compaction intentionally skip reasoning_effort — both are plain
-    # summarizers, and --reasoning-effort targets the agents' model; their
-    # models resolve their own family default via
-    # ``effective_reasoning_effort`` instead. They fall back to the agent
-    # model (never a hardcoded name) so a plain --model run stays on one
-    # provider; --synthesis-model / --compaction-model point them at a
-    # cheaper model.
     root_model = make_model_config(model, reasoning_effort)
     subagent_model = make_model_config(model, reasoning_effort)
     synthesis = make_model_config(synthesis_model or model, None)
@@ -135,130 +129,16 @@ async def _stream(
             console.print(ev.item)
 
 
-def _run(
-    trace_path: Path = typer.Argument(
-        ...,
-        exists=True,
-        readable=True,
-        dir_okay=False,
-        help="JSONL trace file (e.g. tests/fixtures/realistic_traces.jsonl).",
-    ),
-    prompt: str = typer.Option(
-        ..., "--prompt", "-p", help="User prompt to send to the root agent."
-    ),
-    model: str = typer.Option("gpt-5.4-mini", "--model", "-m"),
-    synthesis_model: str | None = typer.Option(
-        None,
-        "--synthesis-model",
-        help=(
-            "Model for synthesis calls (trace summarization). Defaults to "
-            "--model. A small, cheap model your provider serves (e.g. "
-            "gpt-4.1-nano on OpenAI) is recommended."
-        ),
-    ),
-    compaction_model: str | None = typer.Option(
-        None,
-        "--compaction-model",
-        help=(
-            "Model for compaction calls (context summarization) — the "
-            "biggest token consumer in large runs. Defaults to --model. "
-            "A small, cheap model your provider serves (e.g. gpt-4.1-nano "
-            "on OpenAI) is recommended."
-        ),
-    ),
-    max_depth: int = typer.Option(2, "--max-depth", min=0),
-    max_turns: int = typer.Option(20, "--max-turns", min=1),
-    max_parallel: int = typer.Option(10, "--max-parallel", min=1),
-    repo_path: Path | None = typer.Option(
-        None,
-        "--repo-path",
-        exists=True,
-        file_okay=False,
-        dir_okay=True,
-        readable=True,
-        resolve_path=True,
-        help=(
-            "Local checkout of the agent/harness source code that produced the "
-            "traces. Enables the read-only code tools (glob_files/grep_files/"
-            "read_file) so the analysis can cross-reference findings with code "
-            "and cite file:line. When the checkout is a git work tree (and git is "
-            "on PATH), the read-only git tools (git_log/git_show/git_diff/"
-            "git_blame/git_read_file) auto-enable too, for finding regressions and "
-            "problematic commits. Omit to disable."
-        ),
-    ),
-    base_url: str | None = typer.Option(
-        None,
-        "--base-url",
-        help=(
-            "OpenAI-compatible API base URL. Omit to use OPENAI_BASE_URL "
-            "or https://api.openai.com/v1."
-        ),
-    ),
-    api_key: str | None = typer.Option(
-        None,
-        "--api-key",
-        help="Provider API key. Omit to use OPENAI_API_KEY.",
-    ),
-    headers: list[str] | None = typer.Option(
-        None,
-        "--header",
-        "-H",
-        help="Provider header as NAME: VALUE. May be repeated.",
-    ),
-    temperature: float | None = typer.Option(
-        None,
-        "--temperature",
-        min=0.0,
-        max=2.0,
-        help="Sampling temperature forwarded to the model.",
-    ),
-    max_output_tokens: int | None = typer.Option(
-        None,
-        "--max-output-tokens",
-        min=1,
-        help="Maximum output tokens forwarded to the model.",
-    ),
-    parallel_tool_calls: bool = typer.Option(
-        True,
-        "--parallel-tool-calls/--no-parallel-tool-calls",
-        help="Allow models to issue parallel tool calls.",
-    ),
-    refusal_retries: int = typer.Option(
-        0,
-        "--refusal-retries",
-        min=0,
-        help="Retry an agent model request this many times when the model refuses.",
-    ),
-    reasoning_effort: str | None = typer.Option(
-        None,
-        "--reasoning-effort",
-        help=(
-            "Reasoning effort forwarded to the model on root and subagent "
-            f"calls (synthesis and compaction never use reasoning). One of: "
-            f"{', '.join(REASONING_EFFORT_CHOICES)}. Omit to use the model "
-            "family's documented max for known reasoning models, or the "
-            "provider default for non-reasoning models."
-        ),
-    ),
-    telemetry: bool = typer.Option(
-        False,
-        "--telemetry",
-        help=(
-            "Emit OpenInference traces of HALO's own LLM/tool/agent "
-            "activity. If CATALYST_OTLP_TOKEN is set, spans go to "
-            "inference.net Catalyst; otherwise to "
-            "$HALO_TELEMETRY_PATH (default: ./halo-telemetry-{run_id}.jsonl)."
-        ),
-    ),
-) -> None:
-    """Run the HALO engine against TRACE_PATH and stream output to stdout."""
-    if api_key is None and not os.environ.get("OPENAI_API_KEY"):
+def _require_api_key(api_key: str | None) -> None:
+    if api_key is None and not os.environ.get("OPENAI_API_KEY") and not os.environ.get("ANTHROPIC_API_KEY"):
         typer.echo(
-            "OPENAI_API_KEY not set; pass --api-key or export OPENAI_API_KEY.",
+            "No API key: pass --api-key or export OPENAI_API_KEY (or ANTHROPIC_API_KEY).",
             err=True,
         )
         raise typer.Exit(1)
+
+
+def _require_ripgrep_for_repo(repo_path: Path | None) -> None:
     if repo_path is not None and find_ripgrep() is None:
         typer.echo(
             "--repo-path requires ripgrep (rg), which was not found on PATH. "
@@ -267,6 +147,45 @@ def _run(
             err=True,
         )
         raise typer.Exit(1)
+
+
+cli = typer.Typer(add_completion=False, rich_markup_mode=None, no_args_is_help=True)
+
+
+@cli.command("analyze")
+def analyze(
+    trace_path: Path = typer.Argument(
+        ..., exists=True, readable=True, dir_okay=False, help="JSONL trace file."
+    ),
+    prompt: str = typer.Option(DEFAULT_PROMPT, "--prompt", "-p", help="Prompt for the root agent."),
+    model: str = typer.Option("gpt-5.4-mini", "--model", "-m"),
+    synthesis_model: str | None = typer.Option(None, "--synthesis-model"),
+    compaction_model: str | None = typer.Option(None, "--compaction-model"),
+    max_depth: int = typer.Option(2, "--max-depth", min=0),
+    max_turns: int = typer.Option(20, "--max-turns", min=1),
+    max_parallel: int = typer.Option(10, "--max-parallel", min=1),
+    repo_path: Path | None = typer.Option(
+        None, "--repo-path", exists=True, file_okay=False, dir_okay=True, readable=True, resolve_path=True,
+        help="Local checkout of the source that produced the traces (enables read-only code/git tools).",
+    ),
+    base_url: str | None = typer.Option(None, "--base-url", help="OpenAI-compatible API base URL."),
+    api_key: str | None = typer.Option(None, "--api-key", help="Provider API key."),
+    headers: list[str] | None = typer.Option(None, "--header", "-H", help="Provider header NAME: VALUE."),
+    temperature: float | None = typer.Option(None, "--temperature", min=0.0, max=2.0),
+    max_output_tokens: int | None = typer.Option(None, "--max-output-tokens", min=1),
+    parallel_tool_calls: bool = typer.Option(True, "--parallel-tool-calls/--no-parallel-tool-calls"),
+    refusal_retries: int = typer.Option(0, "--refusal-retries", min=0),
+    reasoning_effort: str | None = typer.Option(
+        None, "--reasoning-effort",
+        help=f"One of: {', '.join(REASONING_EFFORT_CHOICES)}. Omit for the model family default.",
+    ),
+    telemetry: bool = typer.Option(False, "--telemetry", help="Emit OpenInference traces of HALO itself."),
+    detach: bool = typer.Option(False, "--detach", "-d", help="Run in the background as a detached job."),
+) -> None:
+    """Run the HALO engine against TRACE_PATH and stream output to stdout."""
+    _require_api_key(api_key)
+    _require_ripgrep_for_repo(repo_path)
+    detach_if_requested(detach, name="analyze")
     cfg = _make_config(
         model=model,
         synthesis_model=synthesis_model,
@@ -287,12 +206,82 @@ def _run(
     asyncio.run(_stream(trace_path, prompt, cfg, telemetry=telemetry))
 
 
-cli = typer.Typer(add_completion=False, rich_markup_mode=None)
-cli.command()(_run)
+@cli.command("pipeline")
+def pipeline(
+    project: str = typer.Argument(..., help="Langfuse project name (see .env for its keys)."),
+    prompt: str = typer.Option(DEFAULT_PROMPT, "--prompt", "-p"),
+    model: str = typer.Option(None, "--model", "-m", help="Defaults to $HALO_MODEL or claude-opus-4-8."),
+    max_depth: int = typer.Option(None, "--max-depth", min=0),
+    max_turns: int = typer.Option(None, "--max-turns", min=1),
+    max_parallel: int = typer.Option(None, "--max-parallel", min=1),
+    full: bool = typer.Option(False, "--full", help="Ignore the cursor and re-pull everything."),
+    skip_backfill: bool = typer.Option(False, "--skip-backfill", help="Reuse the existing store file."),
+    detach: bool = typer.Option(False, "--detach", "-d", help="Run the whole pipeline as a detached job."),
+) -> None:
+    """Backfill Langfuse -> convert -> analyze, in one command."""
+    _require_api_key(None)
+    detach_if_requested(detach, name=f"pipeline-{project}")
+
+    store = Path.cwd() / "store"
+    raw = store / f"{project}.jsonl"
+    halo = store / f"{project}.halo.jsonl"
+
+    if not skip_backfill:
+        typer.echo(f"[1/3] backfill {project}")
+        summary = backfill_project(project, limit=100, min_interval=0.25, max_pages=0, full=full)
+        typer.echo(json.dumps(summary))
+        if "skipped" in summary:
+            raise typer.Exit(1)
+    if not raw.exists():
+        typer.echo(f"no store file at {raw}", err=True)
+        raise typer.Exit(1)
+
+    typer.echo("[2/3] convert -> HALO spans")
+    conv = convert_traces(raw, halo, start=None, end=None, require_completed_traces=False)
+    typer.echo(json.dumps(conv))
+
+    typer.echo("[3/3] analyze")
+    cfg = _make_config(
+        model=model or os.environ.get("HALO_MODEL") or "claude-opus-4-8",
+        synthesis_model=None,
+        compaction_model=None,
+        max_depth=max_depth if max_depth is not None else int(os.environ.get("HALO_MAX_DEPTH", 1)),
+        max_turns=max_turns if max_turns is not None else int(os.environ.get("HALO_MAX_TURNS", 8)),
+        max_parallel=max_parallel if max_parallel is not None else int(os.environ.get("HALO_MAX_PARALLEL", 2)),
+        temperature=None,
+        max_output_tokens=None,
+        parallel_tool_calls=True,
+        reasoning_effort=None,
+        refusal_retries=0,
+        base_url=os.environ.get("OPENAI_BASE_URL"),
+        api_key=os.environ.get("OPENAI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY"),
+        default_headers=None,
+        repo_path=None,
+    )
+    asyncio.run(_stream(halo, prompt, cfg))
+
+
+cli.command("backfill")(backfill_command)
+cli.command("convert")(convert_command)
+cli.add_typer(jobs_app, name="jobs")
 
 
 def app() -> None:
     """Entry point bound to `halo` in pyproject.toml."""
+    load_dotenv()
+    # Anthropic's OpenAI-compatible endpoint only serves /chat/completions, not
+    # the Responses API the SDK defaults to. Flip the SDK when targeting it so
+    # `--base-url https://api.anthropic.com/v1/ --model claude-opus-4-8` works
+    # with a plain ANTHROPIC_API_KEY. Auto-on when the base URL is Anthropic.
+    api_mode = os.environ.get("HALO_OPENAI_API")
+    base = os.environ.get("OPENAI_BASE_URL", "")
+    if api_mode == "chat_completions" or "anthropic.com" in base:
+        from agents import set_default_openai_api
+
+        set_default_openai_api("chat_completions")
+    # Fall back to the Anthropic key for the OpenAI-compatible client.
+    if not os.environ.get("OPENAI_API_KEY") and os.environ.get("ANTHROPIC_API_KEY"):
+        os.environ["OPENAI_API_KEY"] = os.environ["ANTHROPIC_API_KEY"]
     cli()
 
 

@@ -41,3 +41,11 @@ app/*.tsbuildinfo
 
 # Claude Code local tooling config
 .claude/
+
+# CLI infra: local data store, analysis output, pi session dir
+store/
+.pi/
+*.halo.jsonl
+*.halo.jsonl.summary.json
+halo-telemetry-*.jsonl
+codedb.snapshot

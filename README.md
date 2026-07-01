@@ -37,92 +37,30 @@
   <a href="#contributing">Contributing</a>
 </p>
 
-<!-- <table>
-  <tr>
-    <td width="50%">
-      <img src="https://github.com/context-labs/HALO/blob/main/assets/import-traces-new.png" alt="Import agent traces">
-      <br>
-      <strong>Import agent traces</strong>
-      <br>
-      Bring in traces from Langfuse, Arize, JSONL, or a local agent.
-    </td>
-    <td width="50%">
-      <img src="https://github.com/context-labs/HALO/blob/main/assets/view-traces.png" alt="Browse trace history">
-      <br>
-      <strong>Browse trace history</strong>
-      <br>
-      Search imported traces and understand the shape of a dataset.
-    </td>
-  </tr>
-  <tr>
-    <td width="50%">
-      <img src="https://github.com/context-labs/HALO/blob/main/assets/run-halo.png" alt="Run HALO analysis">
-      <br>
-      <strong>Run HALO analysis</strong>
-      <br>
-      Launch reports over trace groups and follow each analysis step.
-    </td>
-    <td width="50%">
-      <img src="https://github.com/context-labs/HALO/blob/main/assets/trace-timeline.png" alt="Review trace timelines">
-      <br>
-      <strong>Review trace timelines</strong>
-      <br>
-      Spot latency, retries, expensive spans, and branching behavior.
-    </td>
-  </tr>
-  <tr>
-    <td width="50%">
-      <img src="https://github.com/context-labs/HALO/blob/main/assets/view-chat-session.png" alt="Inspect full sessions">
-      <br>
-      <strong>Inspect full sessions</strong>
-      <br>
-      Read conversations, tool calls, and model responses in context.
-    </td>
-    <td width="50%">
-      <img src="https://github.com/context-labs/HALO/blob/main/assets/view-halo-report.png" alt="Read HALO reports">
-      <br>
-      <strong>Read HALO reports</strong>
-      <br>
-      Review ranked failures, bottlenecks, and concrete recommendations.
-    </td>
-  </tr>
-  <tr>
-    <td width="50%">
-      <img src="https://github.com/context-labs/HALO/blob/main/assets/open-in-ai-agent-editor.png" alt="Ship fixes with an agent">
-      <br>
-      <strong>Ship fixes with an agent</strong>
-      <br>
-      Send HALO reports to Claude, Cursor, or Codex for implementation.
-    </td>
-    <td width="50%">
-      <img src="https://github.com/context-labs/HALO/blob/main/assets/import-traces.png" alt="Import data sources">
-      <br>
-      <strong>Import data sources</strong>
-      <br>
-      Connect existing observability tools or upload trace exports.
-    </td>
-  </tr>
-</table> -->
 
+
+> **This is a CLI-only fork** of [context-labs/HALO](https://github.com/context-labs/HALO).
+> The Electron desktop app has been removed; everything runs headless from the shell —
+> backfill from Langfuse, convert, and analyze.
 
 ## Quickstart
-Install the HALO desktop app with:
 
 ```bash
-curl -fsSL https://inference.net/halo/install.sh | sh
+task env:setup                 # install uv, sync venv, git hooks
+cp .env.example .env           # fill in Langfuse keys + ANTHROPIC_API_KEY
+uv run halo pipeline myapp-staging -p "Diagnose the top failures and fixes"
 ```
-<img src="./assets/view-halo-report.png" alt="Read HALO reports">
 
-The installer downloads the latest release for your platform and sets up the desktop app. macOS uses a signed, notarized DMG. You can also install directly from the GitHub [releases](https://github.com/context-labs/halo/releases) page. 
-
-If you're looking for a hosted, plug-and-play version of HALO, please sign up for [inference.net](https://inference.net?utm_source=halo-github&utm_medium=readme&utm_id=halo) and follow the instructions [here](https://docs.inference.net/get-started/capture-first-trace).
+`halo pipeline` backfills traces from Langfuse (incrementally), converts them to HALO's
+OTLP-shaped JSONL, and runs the RLM analysis engine — all headless. Add `--detach` to run it
+as a background job (see [Langfuse pipeline](#langfuse-pipeline) and [Background jobs](#background-jobs)).
 
 
 ## What is this?
 
 HALO is a methodology for building recursively self-improving agent harnesses using [RLMs](https://github.com/alexzhang13/rlm). This repository contains:
 
-- The [HALO Desktop App](https://inference.net/products/halo/?utm_source=halo-github&utm_medium=readme&utm_id=halo) for running HALO locally on your machine.
+- A CLI + headless Langfuse backfill/convert/analyze pipeline (this fork).
 - Information on HALO methodology.
 - A Python package that implements the core HALO-RLM engine. [View on PyPI](https://pypi.org/project/halo-engine/)
 - A demo project that shows how to build HALO loops for your agents using the Python package. [View demo](/demo/openai-agents-sdk-demo/)
@@ -171,7 +109,7 @@ export OPENAI_API_KEY=...
 # Optional: point HALO at another OpenAI-compatible provider.
 export OPENAI_BASE_URL=https://openrouter.ai/api/v1
 
-halo path_to_your_traces.jsonl -p "Diagnose errors you find and suggest fixes"
+halo analyze path_to_your_traces.jsonl -p "Diagnose errors you find and suggest fixes"
 ```
 
 HALO uses the canonical OpenAI env vars: `OPENAI_API_KEY` for credentials and `OPENAI_BASE_URL` for OpenAI-compatible providers. If `OPENAI_BASE_URL` is unset, HALO uses `https://api.openai.com/v1`. Run `halo --help` to see all CLI options. The CLI mirrors the model/provider settings exposed by the Python SDK's
@@ -182,8 +120,9 @@ HALO uses the canonical OpenAI env vars: `OPENAI_API_KEY` for credentials and `O
 
 | Flag                                               | Default                                         | Description                                                                                                                                              |
 | -------------------------------------------------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `TRACE_PATH`                                       | required                                        | JSONL trace file                                                                                                                                         |
-| `--prompt`, `-p`                                   | required                                        | User prompt sent to the root agent                                                                                                                       |
+| `TRACE_PATH`                                       | required                                        | JSONL trace file (`halo analyze TRACE_PATH`)                                                                                                             |
+| `--prompt`, `-p`                                   | built-in default                                | User prompt sent to the root agent                                                                                                                       |
+| `--detach`, `-d`                                   | off                                             | Run as a detached background job (see [Background jobs](#background-jobs))                                                                               |
 | `--model`, `-m`                                    | `gpt-5.4-mini`                                  | Model name for root and subagent calls; also the fallback for synthesis and compaction                                                                   |
 | `--synthesis-model`                                | `--model`                                       | Model for synthesis calls (trace summarization). A small, cheap model (e.g. `gpt-4.1-nano`) is recommended                                               |
 | `--compaction-model`                               | `--model`                                       | Model for compaction calls (context summarization) — the biggest token consumer in large runs. A small, cheap model (e.g. `gpt-4.1-nano`) is recommended |
@@ -204,7 +143,7 @@ HALO uses the canonical OpenAI env vars: `OPENAI_API_KEY` for credentials and `O
 For example:
 
 ```bash
-halo path_to_your_traces.jsonl \
+halo analyze path_to_your_traces.jsonl \
   -p "Diagnose errors you find and suggest fixes" \
   --base-url https://openrouter.ai/api/v1 \
   -H "HTTP-Referer: https://example.com"
@@ -215,7 +154,7 @@ halo path_to_your_traces.jsonl \
 HALO can emit OpenInference-shaped traces of its own LLM, tool, and agent activity. It is off by default; nothing is emitted unless you pass `--telemetry`.
 
 ```bash
-halo TRACE_PATH --prompt "..." --telemetry
+halo analyze TRACE_PATH --prompt "..." --telemetry
 ```
 
 When telemetry is enabled, `CATALYST_OTLP_TOKEN` uploads spans to inference.net Catalyst over OTLP. If it is unset, spans are written to a local JSONL file at `./halo-telemetry-{run_id}.jsonl` in the current working directory.
@@ -230,6 +169,52 @@ When telemetry is enabled, `CATALYST_OTLP_TOKEN` uploads spans to inference.net 
 | `HALO_TELEMETRY_PATH`     | `./halo-telemetry-{run_id}.jsonl` | Local fallback file path. Only used when `CATALYST_OTLP_TOKEN` is unset |
 
 We have provided a [simple demo](/demo/openai-agents-sdk-demo/) and an [AppWorld](#appworld) demo.
+
+## Langfuse pipeline
+
+Headless backfill → convert → analyze, driven by `.env` (copy `.env.example`). Langfuse API
+keys are **per project**; set `LANGFUSE_<PROJECT>_PUBLIC_KEY` / `_SECRET_KEY` for each
+(`--project myapp-staging` → `LANGFUSE_MYAPP_STAGING_*`).
+
+```bash
+# one command: backfill (incremental) + convert + analyze
+uv run halo pipeline myapp-staging -p "Top failure modes and fixes"
+```
+
+Or run the steps individually:
+
+```bash
+# 1. backfill — paginates the Langfuse API into store/<project>.jsonl.
+#    Incremental: re-runs only fetch observations newer than the saved cursor.
+#    Honors HTTP 429 Retry-After + backoff; --min-interval self-throttles.
+uv run halo backfill -p myapp -p myapp-staging
+
+# 2. convert raw Langfuse observations -> HALO OTLP-shaped spans
+uv run halo convert store/myapp-staging.jsonl store/myapp-staging.halo.jsonl
+
+# 3. analyze (Anthropic Opus via OpenAI-compatible chat/completions)
+uv run halo analyze store/myapp-staging.halo.jsonl -m claude-opus-4-8 -p "Top failure modes?"
+```
+
+**Anthropic note:** Anthropic exposes only `/chat/completions` (no Responses API), so set
+`HALO_OPENAI_API=chat_completions` (auto-detected when the base URL is `anthropic.com`) to flip
+the agents SDK. `store/` (data, cursors, analysis output) and `.env` are gitignored — never committed.
+
+## Background jobs
+
+Analysis and backfill runs take minutes. Add `--detach` (`-d`) to any of `analyze`, `backfill`,
+or `pipeline` to run it in its own session (`setsid`), surviving the launching shell. Jobs are
+tracked in a global registry at `~/.halo/jobs/` (override with `$HALO_HOME`), so any shell can
+query them — no server process.
+
+```bash
+uv run halo pipeline myapp-staging -d        # -> detached job <id>
+uv run halo jobs list                        # id, status, pid, start time
+uv run halo jobs logs <id> -f                # stream output until it ends
+uv run halo jobs status <id>                 # state + exit code + log path
+uv run halo jobs cancel <id>                 # SIGTERM the whole process group
+uv run halo jobs clean                       # drop finished job records
+```
 
 ### Python API
 
@@ -282,8 +267,8 @@ Local development against this repo uses [`uv`](https://docs.astral.sh/uv/) for 
 ### Setup
 
 ```bash
-git clone https://github.com/context-labs/HALO
-cd HALO
+git clone https://github.com/umgbhalla/halo-cli
+cd halo-cli
 task env:setup
 ```
 

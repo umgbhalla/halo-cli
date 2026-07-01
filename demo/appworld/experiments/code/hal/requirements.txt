@@ -1,2 +1,0 @@
-git+https://github.com/stonybrooknlp/appworld.git
-appworld-agents[simplified,smolagents] @ git+https://github.com/stonybrooknlp/appworld.git@main#egg=appworld-agents&subdirectory=experiments
